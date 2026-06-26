@@ -1,3 +1,4 @@
+import type { AppConfig } from '../../config/app-config';
 import { AdCandidateService } from './ad-candidate.service';
 import { AdDecisionService } from './ad-decision.service';
 import { AdEventEmitter } from './ad-event-emitter.service';
@@ -8,6 +9,24 @@ import type {
   AdDecisionRequest,
   CandidateCampaign,
 } from '../types/ad-decision.types';
+
+const testConfig: AppConfig = {
+  env: 'test',
+  serviceId: 'advertisement-api',
+  runtime: 'go',
+  port: 8080,
+  postgres: {
+    host: '127.0.0.1',
+    port: 55432,
+    database: 'loopad_ad_decision',
+    username: 'loopad',
+    password: 'loopad',
+  },
+  redis: {
+    url: 'redis://127.0.0.1:6379',
+  },
+  hmacSecret: 'test-secret',
+};
 
 function creative(campaignId: string, variant: 'A' | 'B') {
   return {
@@ -102,7 +121,7 @@ function createService(candidates = seedCandidates) {
     candidateService,
     new AdTargetingService(),
     new AdVariantService(),
-    new AdTokenService(),
+    new AdTokenService(testConfig),
     eventEmitter,
   );
 
@@ -110,10 +129,6 @@ function createService(candidates = seedCandidates) {
 }
 
 describe('AdDecisionService', () => {
-  beforeEach(() => {
-    process.env.HMAC_SECRET = 'test-secret';
-  });
-
   it.each([
     [{ category: 'fresh_food', age_group: '30s' }, 'camp_fresh_01'],
     [{ category: 'pet', age_group: '20s' }, 'camp_pet_01'],

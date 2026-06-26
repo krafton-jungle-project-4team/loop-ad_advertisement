@@ -1,6 +1,7 @@
 import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
+import { APP_CONFIG, type AppConfig } from '../../config/app-config';
 import { AdCandidateService } from '../services/ad-candidate.service';
 import { AdClickService } from '../services/ad-click.service';
 import { AdDecisionService } from '../services/ad-decision.service';
@@ -11,6 +12,24 @@ import { AdVariantService } from '../services/ad-variant.service';
 import { AdClickController } from './ad-click.controller';
 import { AdDecisionController } from './ad-decision.controller';
 import type { CandidateCampaign } from '../types/ad-decision.types';
+
+const testConfig: AppConfig = {
+  env: 'test',
+  serviceId: 'advertisement-api',
+  runtime: 'go',
+  port: 8080,
+  postgres: {
+    host: '127.0.0.1',
+    port: 55432,
+    database: 'loopad_ad_decision',
+    username: 'loopad',
+    password: 'loopad',
+  },
+  redis: {
+    url: 'redis://127.0.0.1:6379',
+  },
+  hmacSecret: 'test-secret',
+};
 
 function campaign(
   campaign_id: string,
@@ -53,7 +72,6 @@ describe('Ad API integration', () => {
   };
 
   beforeEach(async () => {
-    process.env.HMAC_SECRET = 'test-secret';
     eventEmitter.emit.mockClear();
 
     const candidateService = {
@@ -101,6 +119,10 @@ describe('Ad API integration', () => {
         AdTargetingService,
         AdVariantService,
         AdTokenService,
+        {
+          provide: APP_CONFIG,
+          useValue: testConfig,
+        },
         {
           provide: AdCandidateService,
           useValue: candidateService,

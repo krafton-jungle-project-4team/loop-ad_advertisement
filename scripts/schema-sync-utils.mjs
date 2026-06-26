@@ -37,7 +37,7 @@ export function connection() {
     user: requiredEnv('PGUSER'),
     password: requiredEnv('PGPASSWORD'),
     database: requiredEnv('PGDATABASE'),
-    sslmode: process.env.PGSSLMODE ?? 'disable',
+    sslmode: requiredEnv('PGSSLMODE'),
   };
 }
 

@@ -1,18 +1,20 @@
 import { Module } from '@nestjs/common';
 import { Pool } from 'pg';
+import { APP_CONFIG, type AppConfig } from '../config/app-config';
 import { PG_POOL } from './database.constants';
 
 @Module({
   providers: [
     {
       provide: PG_POOL,
-      useFactory: () =>
+      inject: [APP_CONFIG],
+      useFactory: (config: AppConfig) =>
         new Pool({
-          host: process.env.DATABASE_HOST ?? '127.0.0.1',
-          port: Number(process.env.DATABASE_PORT ?? 55432),
-          user: process.env.DATABASE_USER ?? 'loopad',
-          password: process.env.DATABASE_PASSWORD ?? 'loopad',
-          database: process.env.DATABASE_NAME ?? 'loopad_ad_decision',
+          host: config.postgres.host,
+          port: config.postgres.port,
+          user: config.postgres.username,
+          password: config.postgres.password,
+          database: config.postgres.database,
         }),
     },
   ],

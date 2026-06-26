@@ -1,9 +1,12 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Inject, Injectable, UnauthorizedException } from '@nestjs/common';
 import { createHmac, timingSafeEqual } from 'node:crypto';
+import { APP_CONFIG, type AppConfig } from '../../config/app-config';
 import type { TrackingTokenPayload } from '../types/ad-decision.types';
 
 @Injectable()
 export class AdTokenService {
+  constructor(@Inject(APP_CONFIG) private readonly config: AppConfig) {}
+
   sign(payload: TrackingTokenPayload): string {
     const encodedPayload = Buffer.from(JSON.stringify(payload)).toString(
       'base64url',
@@ -42,13 +45,7 @@ export class AdTokenService {
   }
 
   private secret(): string {
-    const secret = process.env.HMAC_SECRET;
-
-    if (!secret) {
-      throw new Error('HMAC_SECRET is required');
-    }
-
-    return secret;
+    return this.config.hmacSecret;
   }
 
   private safeEquals(left: string, right: string): boolean {
