@@ -8,7 +8,6 @@ type Env = Record<string, string | undefined>;
 export interface AppConfig {
   env: string;
   serviceId: string;
-  runtime: string;
   port: number;
   postgres: {
     host: string;
@@ -37,7 +36,6 @@ export function loadAppConfig(env: Env = process.env): AppConfig {
   return Object.freeze({
     env: loopadEnv,
     serviceId,
-    runtime: requiredEnv(env, 'LOOPAD_RUNTIME'),
     port: requiredPort(env, 'PORT'),
     postgres: Object.freeze({
       host: requiredEnv(env, 'LOOPAD_AURORA_HOST'),

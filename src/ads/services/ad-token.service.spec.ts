@@ -6,7 +6,6 @@ import type { TrackingTokenPayload } from '../types/ad-decision.types';
 const testConfig: AppConfig = {
   env: 'test',
   serviceId: 'advertisement-api',
-  runtime: 'go',
   port: 8080,
   postgres: {
     host: '127.0.0.1',

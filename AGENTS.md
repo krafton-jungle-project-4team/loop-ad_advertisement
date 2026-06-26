@@ -70,7 +70,6 @@ function requiredEnv(name: string): string {
 export const appConfig = Object.freeze({
   env: requiredEnv('LOOPAD_ENV'),
   serviceId: requiredEnv('LOOPAD_SERVICE_ID'),
-  runtime: requiredEnv('LOOPAD_RUNTIME'),
   port: Number(requiredEnv('PORT')),
 });
 ```
@@ -93,7 +92,7 @@ Dockerfile and runtime rules:
 - The server must read `PORT` and listen on `0.0.0.0:${PORT}`.
 - Do not pass DB endpoints, passwords, tokens, or API keys as Docker build args.
 - Do not bake runtime env or secrets into the image.
-- The server must expose `/health` and return an HTTP `200-399` status when healthy.
+- The server must expose `/health` and return HTTP `200` when healthy.
 
 Deploy workflow rules:
 
@@ -122,8 +121,9 @@ Common server env:
 
 - `LOOPAD_ENV` — execution environment, for example `dev` or `local`.
 - `LOOPAD_SERVICE_ID` — service identifier. For this repository use `advertisement-api`.
-- `LOOPAD_RUNTIME` — runtime identifier from the infra guide. The current infra guide value for Advertisement API is `go`.
 - `PORT` — listen port.
+
+Do not read `LOOPAD_RUNTIME` or similar env to decide the app runtime. The runtime is determined by the Dockerfile, package manifest, and repository structure.
 
 Data env used by this repository:
 
@@ -455,7 +455,6 @@ Local application env should mirror the deployed `LOOPAD_*` contract:
 ```txt
 LOOPAD_ENV=local
 LOOPAD_SERVICE_ID=advertisement-api
-LOOPAD_RUNTIME=go
 PORT=8080
 LOOPAD_AURORA_HOST=127.0.0.1
 LOOPAD_AURORA_PORT=55432

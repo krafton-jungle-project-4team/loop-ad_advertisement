@@ -3,7 +3,6 @@ import { loadAppConfig } from './app-config';
 const validEnv = {
   LOOPAD_ENV: 'local',
   LOOPAD_SERVICE_ID: 'advertisement-api',
-  LOOPAD_RUNTIME: 'go',
   PORT: '8080',
   LOOPAD_AURORA_HOST: '127.0.0.1',
   LOOPAD_AURORA_PORT: '55432',
@@ -15,11 +14,10 @@ const validEnv = {
 };
 
 describe('loadAppConfig', () => {
-  it('loads the explicit LOOPAD runtime contract', () => {
+  it('loads the explicit LOOPAD server env contract', () => {
     expect(loadAppConfig(validEnv)).toMatchObject({
       env: 'local',
       serviceId: 'advertisement-api',
-      runtime: 'go',
       port: 8080,
       postgres: {
         host: '127.0.0.1',
