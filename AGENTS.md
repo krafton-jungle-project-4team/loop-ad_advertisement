@@ -19,6 +19,152 @@ This project does not implement a full ad platform, bidding system, recommendati
 
 ---
 
+## Repository Guidance Scope
+
+Keep a single root `AGENTS.md` for this repository while it remains one deployable server app.
+
+Add nested `AGENTS.md` files only if the repository later becomes a monorepo or contains subtrees with different stacks, commands, ownership, or deployment contracts.
+
+This file should combine:
+
+- LoopAd advertisement domain rules for this service.
+- App repository rules from the infra main guide:
+  `https://github.com/krafton-jungle-project-4team/loop-ad_infra/blob/main/docs/app-repository-guide.md`
+
+When these instructions conflict with the infra guide, update this file to match the infra guide instead of inventing a repository-local variant.
+
+---
+
+## Main Repository Contract
+
+This repository is a LoopAd server app repository. It must follow the main app repository guide maintained in `loop-ad_infra`.
+
+Core rules:
+
+- Do not put fallback or default values on required environment variables.
+- Validate required runtime env immediately during server startup.
+- Collect validated env values into one config object or config module.
+- Fail fast when a required env is missing or malformed.
+- Do not read SSM Parameter Store or Secrets Manager directly from app code.
+- Do not make app code depend on ECS launch type or AWS resource implementation details.
+- Do not commit `.env`, `.env.local`, or `.env.*.local`.
+- Do not put secrets in source, Docker images, GitHub Actions env, logs, metric labels, error responses, or frontend bundles.
+
+Forbidden pattern:
+
+```ts
+const redisUrl = process.env.LOOPAD_REDIS_URL || 'redis://127.0.0.1:6379';
+```
+
+Recommended pattern:
+
+```ts
+function requiredEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(`${name} is required`);
+  }
+  return value;
+}
+
+export const appConfig = Object.freeze({
+  env: requiredEnv('LOOPAD_ENV'),
+  serviceId: requiredEnv('LOOPAD_SERVICE_ID'),
+  port: Number(requiredEnv('PORT')),
+});
+```
+
+### Server Deployment Contract
+
+This repository is built as a Docker image and deployed as an ECS service.
+
+Required repository files:
+
+```txt
+Dockerfile
+.github/workflows/deploy.yml
+config loader
+```
+
+Dockerfile and runtime rules:
+
+- The image must run on `linux/arm64`.
+- The server must read `PORT` and listen on `0.0.0.0:${PORT}`.
+- Do not pass DB endpoints, passwords, tokens, or API keys as Docker build args.
+- Do not bake runtime env or secrets into the image.
+- The server must expose `/health` and return HTTP `200` when healthy.
+
+Deploy workflow rules:
+
+- Use the reusable deploy workflow from `loop-ad_infra`.
+- The workflow should only build/push the image and replace the ECS service image.
+- Do not define runtime env or secrets in the app repo workflow.
+- Use infra guide deploy target names exactly.
+- Initial seed images may be pushed directly only before the ECS service exists, and must include a `latest` tag.
+
+Current dev deploy target for this repository:
+
+| Field | Value |
+|---|---|
+| Service | Advertisement API |
+| `service_name` | `advertisement-api` |
+| `ecr_repository` | `loop-ad/advertisement-api` |
+| `ecs_cluster` | `dev-loop-ad-cluster` |
+| `ecs_service` | `dev-advertisement-api` |
+| `container_name` | `advertisement-api` |
+
+### Server Env Contract
+
+Application runtime code must read the `LOOPAD_*` env contract from the infra guide.
+
+Common server env:
+
+- `LOOPAD_ENV` — execution environment, for example `dev` or `local`.
+- `LOOPAD_SERVICE_ID` — service identifier. For this repository use `advertisement-api`.
+- `PORT` — listen port.
+
+Do not read `LOOPAD_RUNTIME` or similar env to decide the app runtime. The runtime is determined by the Dockerfile, package manifest, and repository structure.
+
+Data env used by this repository:
+
+- `LOOPAD_AURORA_HOST` — PostgreSQL hostname.
+- `LOOPAD_AURORA_PORT` — PostgreSQL port.
+- `LOOPAD_AURORA_DATABASE` — PostgreSQL database name.
+- `LOOPAD_AURORA_USERNAME` — PostgreSQL username secret.
+- `LOOPAD_AURORA_PASSWORD` — PostgreSQL password secret.
+- `LOOPAD_REDIS_URL` — Redis-compatible Valkey endpoint.
+
+For Redis in deployed environments, connect to `LOOPAD_REDIS_URL` as the provided endpoint. Do not silently fall back to local Redis or another address.
+
+App-specific secret env:
+
+- `HMAC_SECRET` — secret used to sign tracking tokens. This is required until the infra contract defines a `LOOPAD_*` replacement name.
+
+Legacy local names such as `DATABASE_HOST`, `DATABASE_PORT`, `DATABASE_USER`, `DATABASE_PASSWORD`, `DATABASE_NAME`, `REDIS_URL`, and `PROJECT_ID` should not be used for new runtime code. When touching config code, migrate toward the `LOOPAD_*` contract.
+
+Schema tools may continue to use standard libpq variables:
+
+- `PGHOST`
+- `PGPORT`
+- `PGUSER`
+- `PGPASSWORD`
+- `PGDATABASE`
+- `PGSSLMODE`
+
+### Server Logging Contract
+
+The server must log to stdout/stderr only.
+
+Logging rules:
+
+- Prefer JSON structured logs.
+- Include `timestamp`, `level`, `service`, `env`, and `message`.
+- Request logs should include `requestId` or `traceId`.
+- Do not log secrets, tokens, passwords, API keys, DB credentials, or personally identifying information.
+- Do not manage file logs in application code.
+
+---
+
 ## Core Domain Rules
 
 ### Main Page Slots
@@ -302,27 +448,33 @@ scripts/
 
 ## Local Environment
 
-Local development uses PostgreSQL and Redis through `docker-compose` services.
+Local development uses explicitly provided env values. Do not add runtime fallbacks or defaults just for local convenience.
 
-Application runtime environment variables:
+Local application env should mirror the deployed `LOOPAD_*` contract:
 
-- `DATABASE_HOST` — Postgres host for the application `pg` pool.
-- `DATABASE_PORT` — Postgres port for the application `pg` pool.
-- `DATABASE_USER` — Postgres user for the application `pg` pool.
-- `DATABASE_PASSWORD` — Postgres password for the application `pg` pool.
-- `DATABASE_NAME` — Postgres database name for the application `pg` pool.
-- `REDIS_URL` — Redis connection string.
-- `HMAC_SECRET` — secret used to sign tracking tokens.
-- `PROJECT_ID` — default project/tenant id, for example `loopad-demo-shop`.
+```txt
+LOOPAD_ENV=local
+LOOPAD_SERVICE_ID=advertisement-api
+PORT=8080
+LOOPAD_AURORA_HOST=127.0.0.1
+LOOPAD_AURORA_PORT=55432
+LOOPAD_AURORA_DATABASE=loopad_ad_decision
+LOOPAD_AURORA_USERNAME=loopad
+LOOPAD_AURORA_PASSWORD=loopad
+LOOPAD_REDIS_URL=redis://127.0.0.1:6379
+HMAC_SECRET=replace-me-with-a-local-secret
+```
 
-Schema tool environment variables:
+Schema tool env may still use standard libpq names:
 
-- `PGHOST` — Postgres host for sqldef and psql.
-- `PGPORT` — Postgres port for sqldef and psql.
-- `PGUSER` — Postgres user for sqldef and psql.
-- `PGPASSWORD` — Postgres password for sqldef and psql.
-- `PGDATABASE` — Postgres database name for sqldef and psql.
-- `PGSSLMODE` — Postgres SSL mode for sqldef and psql.
+```txt
+PGHOST=127.0.0.1
+PGPORT=55432
+PGUSER=loopad
+PGPASSWORD=loopad
+PGDATABASE=loopad_ad_decision
+PGSSLMODE=disable
+```
 
 Both groups point at the same local Postgres instance. The duplicate naming exists because sqldef and psql read standard libpq `PG*` variables automatically.
 

@@ -1,14 +1,22 @@
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import {
+  Inject,
+  Injectable,
+  Logger,
+  OnModuleDestroy,
+  OnModuleInit,
+} from '@nestjs/common';
 import { createClient, type RedisClientType } from 'redis';
+import { APP_CONFIG, type AppConfig } from '../config/app-config';
 
 @Injectable()
 export class RedisService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(RedisService.name);
   private client: RedisClientType | null = null;
 
+  constructor(@Inject(APP_CONFIG) private readonly config: AppConfig) {}
+
   async onModuleInit(): Promise<void> {
-    const url = process.env.REDIS_URL ?? 'redis://127.0.0.1:6379';
-    const client = createClient({ url });
+    const client = createClient({ url: this.config.redis.url });
 
     client.on('error', (error) => {
       this.logger.warn(`Redis client error: ${(error as Error).message}`);

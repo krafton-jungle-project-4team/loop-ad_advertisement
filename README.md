@@ -15,6 +15,8 @@ LoopAd 데모 쇼핑 서비스의 MVP 광고 서버입니다.
 - Main API:
   - `POST /v1/ad-decision`
   - `POST /v1/ad-click`
+- Health check:
+  - `GET /health`
 
 MVP에서 지원하는 광고 슬롯은 메인 페이지 슬롯 3개뿐입니다.
 
@@ -98,25 +100,27 @@ source .env.example
 set +a
 ```
 
-실제 개발에서는 `.env.example`을 참고해 로컬용 `.env`를 만들고, 아래처럼 로드해도 됩니다.
+실제 개발에서는 `.env.example`을 참고해 로컬용 `.env.local`을 만들고, 아래처럼 로드해도 됩니다. `.env.local`은 커밋하지 않습니다.
 
 ```bash
 set -a
-source .env
+source .env.local
 set +a
 ```
 
 중요한 환경변수:
 
 ```txt
-DATABASE_HOST=127.0.0.1
-DATABASE_PORT=55432
-DATABASE_USER=loopad
-DATABASE_PASSWORD=loopad
-DATABASE_NAME=loopad_ad_decision
-REDIS_URL=redis://127.0.0.1:6379
+LOOPAD_ENV=local
+LOOPAD_SERVICE_ID=advertisement-api
+PORT=8080
+LOOPAD_AURORA_HOST=127.0.0.1
+LOOPAD_AURORA_PORT=55432
+LOOPAD_AURORA_DATABASE=loopad_ad_decision
+LOOPAD_AURORA_USERNAME=loopad
+LOOPAD_AURORA_PASSWORD=loopad
+LOOPAD_REDIS_URL=redis://127.0.0.1:6379
 HMAC_SECRET=replace-me-with-a-local-secret
-PROJECT_ID=loopad-demo-shop
 
 PGHOST=127.0.0.1
 PGPORT=55432
@@ -126,7 +130,7 @@ PGDATABASE=loopad_ad_decision
 PGSSLMODE=disable
 ```
 
-`HMAC_SECRET`이 없으면 tracking token 생성과 검증이 실패합니다.
+`LOOPAD_*`, `PORT`, `HMAC_SECRET` 중 하나라도 없거나 형식이 틀리면 서버가 시작 시점에 실패합니다.
 
 ### 4. DB schema 적용 및 seed 입력
 
@@ -148,10 +152,16 @@ npm run db:seed
 npm run dev
 ```
 
-기본 포트는 `3000`입니다.
+로컬 예시 포트는 `PORT=8080`입니다.
 
 ```txt
-http://localhost:3000
+http://localhost:8080
+```
+
+Health check:
+
+```txt
+http://localhost:8080/health
 ```
 
 ## Postman 빠른 테스트
@@ -162,7 +172,7 @@ Postman 설정:
 
 ```txt
 Method: POST
-URL: http://localhost:3000/v1/ad-decision
+URL: http://localhost:8080/v1/ad-decision
 Headers:
   Content-Type: application/json
 Body:
@@ -261,7 +271,7 @@ Postman 설정:
 
 ```txt
 Method: POST
-URL: http://localhost:3000/v1/ad-click
+URL: http://localhost:8080/v1/ad-click
 Headers:
   Content-Type: application/json
 Body:
@@ -476,16 +486,16 @@ source .env.example
 set +a
 ```
 
-### HMAC_SECRET 누락
+### 필수 env 누락
 
-`HMAC_SECRET`이 없으면 tracking token을 만들 수 없습니다. Postman에서 `/v1/ad-decision` 요청이 실패한다면 환경변수 로드를 먼저 확인합니다.
+이 서버는 시작 시점에 필수 env를 검증합니다. `LOOPAD_*`, `PORT`, `HMAC_SECRET` 중 하나라도 없거나 형식이 틀리면 서버가 빠르게 실패합니다.
 
 ### Postgres 포트 혼동
 
 컨테이너 내부 Postgres 포트는 `5432`이지만, 로컬 host 포트는 기본 `55432`입니다.
 
 ```txt
-DATABASE_PORT=55432
+LOOPAD_AURORA_PORT=55432
 PGPORT=55432
 ```
 
