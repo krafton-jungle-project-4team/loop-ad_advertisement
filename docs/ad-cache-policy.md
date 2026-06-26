@@ -79,14 +79,16 @@ Example:
     },
     "creatives": [
       {
-        "creative_id": "cr_fresh_A",
+        "creative_id": "1",
+        "campaign_id": "camp_fresh_01",
         "variant": "A",
         "headline": "신선한 닭가슴살 30% 할인",
         "image_url": "https://placehold.co/800x400?text=fresh-A",
         "target_url": "/category/fresh_food"
       },
       {
-        "creative_id": "cr_fresh_B",
+        "creative_id": "2",
+        "campaign_id": "camp_fresh_01",
         "variant": "B",
         "headline": "오늘의 신선특가 ✨",
         "image_url": "https://placehold.co/800x400?text=fresh-B",
@@ -103,7 +105,7 @@ Example:
 - Each campaign candidate includes its placement data.
 - Each campaign candidate includes its target conditions.
 - Cache JSON uses short target keys: `category`, `age_groups`, and `gender`.
-- Database columns use `target_category`, `target_age_groups`, and `target_gender`; the repository maps between the DB column names and cache JSON keys.
+- Common DB rows use `segment_ad_mappings.segment_json`; the mapper converts it into cache JSON keys.
 - Each campaign candidate includes both A and B creatives.
 - Including both creatives avoids another Redis lookup after variant hashing.
 - The value must be enough to complete the decision in memory.

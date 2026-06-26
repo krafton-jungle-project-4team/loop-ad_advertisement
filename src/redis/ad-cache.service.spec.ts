@@ -18,7 +18,7 @@ const candidate: CandidateCampaign = {
   },
   creatives: [
     {
-      creative_id: 'cr_fresh_A',
+      creative_id: '1',
       campaign_id: 'camp_fresh_01',
       variant: 'A',
       headline: 'fresh A',
@@ -26,7 +26,7 @@ const candidate: CandidateCampaign = {
       target_url: '/category/fresh_food',
     },
     {
-      creative_id: 'cr_fresh_B',
+      creative_id: '2',
       campaign_id: 'camp_fresh_01',
       variant: 'B',
       headline: 'fresh B',

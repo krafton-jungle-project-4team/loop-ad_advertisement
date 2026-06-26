@@ -3,9 +3,8 @@ import { DatabaseModule } from '../database/database.module';
 import { RedisModule } from '../redis/redis.module';
 import { AdClickController } from './controllers/ad-click.controller';
 import { AdDecisionController } from './controllers/ad-decision.controller';
-import { CampaignRepository } from './repositories/campaign.repository';
-import { CreativeRepository } from './repositories/creative.repository';
-import { PlacementRepository } from './repositories/placement.repository';
+import { AdCandidateRepository } from './repositories/ad-candidate.repository';
+import { AdCandidateMapper } from './services/ad-candidate.mapper';
 import { AdCandidateService } from './services/ad-candidate.service';
 import { AdClickService } from './services/ad-click.service';
 import {
@@ -21,9 +20,8 @@ import { AdVariantService } from './services/ad-variant.service';
   imports: [DatabaseModule, RedisModule],
   controllers: [AdDecisionController, AdClickController],
   providers: [
-    PlacementRepository,
-    CampaignRepository,
-    CreativeRepository,
+    AdCandidateRepository,
+    AdCandidateMapper,
     AdCandidateService,
     AdTargetingService,
     AdVariantService,

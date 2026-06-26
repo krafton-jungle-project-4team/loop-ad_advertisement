@@ -26,17 +26,17 @@ main_side_left
 main_side_right
 ```
 
-상세 페이지 슬롯, 검색 페이지 슬롯, 입찰 시스템, 추천 서버 연동, Kafka/Kinesis 이벤트 파이프라인, 관리자 UI는 MVP 범위가 아닙니다.
+상세 페이지 슬롯, 검색 페이지 슬롯, 입찰 시스템, 추천 결과 소비 전용 decisioning, Kafka/Kinesis 이벤트 파이프라인, 관리자 UI는 MVP 범위가 아닙니다.
 
 ## 핵심 동작
 
 광고 결정은 아래 순서로 진행됩니다.
 
 ```txt
-Placement → Campaign → Creative
+Segment Ad Mapping → Campaign → Creative
 ```
 
-1. Placement: 요청된 `slot_id`에 노출 가능한 캠페인 후보를 찾습니다.
+1. Segment Ad Mapping: `execution_hint_json.slot_id`로 요청 슬롯에 노출 가능한 캠페인 후보를 찾습니다.
 2. Campaign: 사용자 context와 캠페인 target 조건을 비교해 매칭되는 캠페인을 고릅니다.
 3. Creative: 선택된 캠페인 안에서 A/B creative variant를 결정합니다.
 
@@ -46,13 +46,13 @@ Campaign selection은 rule-based targeting입니다.
 - 비어 있는 target 필드는 pass-through 조건입니다.
 - category가 주요 targeting 축입니다.
 - age, gender는 보조 targeting 축입니다.
-- campaign에 `target_gender`가 있으면 `context.gender`가 정확히 일치해야 합니다.
+- 후보 target에 `gender`가 있으면 `context.gender`가 정확히 일치해야 합니다.
 - `context.gender`가 없거나 `null`이면 gender-targeted campaign은 매칭되지 않습니다.
 - 매칭된 campaign 중 priority가 높은 campaign이 선택됩니다.
 - weight-based distribution은 MVP 범위가 아닙니다.
 
 A/B creative selection은 랜덤이 아니라 deterministic hashing입니다.   
-단독 구현이라 추천 서버가 없어서 rule-based로 진행했습니다.
+추천 결과 소비 전용 전환 전까지는 광고 서버가 임시로 A/B variant를 계산합니다.
 
 ```txt
 input = user_id + ":" + campaign_id
@@ -142,7 +142,7 @@ npm run db:seed
 
 - `db:migrate`: `database/schema.sql`을 sqldef로 적용합니다.
 - `db:verify`: DB schema drift를 확인합니다.
-- `db:seed`: demo campaign, creative, placement 데이터를 넣습니다.
+- `db:seed`: demo project, campaign, creative, recommendation result, segment ad mapping 데이터를 넣습니다.
 
 이미 seed가 들어간 DB에서 `npm run db:seed`를 다시 실행하면 primary key 중복 오류가 날 수 있습니다. 이 경우는 데이터가 이미 들어간 상태라는 뜻입니다.
 
@@ -199,7 +199,7 @@ Body에는 이것만 붙여넣습니다.
 
 정상이라면 `main_hero` 슬롯에 대해 `camp_fresh_01` 캠페인이 선택됩니다.
 
-`user_001:camp_fresh_01`의 MurmurHash3 bucket은 `44`이고, `44 < 50`이므로 variant는 `A`입니다. 따라서 creative는 `cr_fresh_A`가 나오는 것이 정상입니다.
+`user_001:camp_fresh_01`의 MurmurHash3 bucket은 `44`이고, `44 < 50`이므로 variant는 `A`입니다. 따라서 creative는 공용 스키마의 `ad_creatives.id` 값인 `"1"`이 나오는 것이 정상입니다.
 
 응답 예시:
 
@@ -208,7 +208,7 @@ Body에는 이것만 붙여넣습니다.
   "decisions": [
     {
       "slot_id": "main_hero",
-      "creative_id": "cr_fresh_A",
+      "creative_id": "1",
       "campaign_id": "camp_fresh_01",
       "variant": "A",
       "creative": {
@@ -325,7 +325,7 @@ Body:
   "decisions": [
     {
       "slot_id": "main_hero",
-      "creative_id": "cr_fresh_A",
+      "creative_id": "1",
       "campaign_id": "camp_fresh_01",
       "variant": "A",
       "creative": {
@@ -376,7 +376,9 @@ Body:
 
 `database/seed.sql`은 demo 검증용 데이터를 넣습니다.
 
-### Campaigns
+### Segment Ad Mappings
+
+`campaigns.external_campaign_id`가 API와 token의 `campaign_id`로 쓰이고, 슬롯/priority/target은 `segment_ad_mappings`의 JSON 필드에서 읽습니다.
 
 | campaign_id | slot | priority | target |
 |---|---|---:|---|
@@ -387,25 +389,14 @@ Body:
 
 ### Creatives
 
-각 campaign은 A/B creative 2개를 가집니다. 총 8개입니다.
+각 campaign은 A/B creative 2개를 가집니다. 총 8개입니다. `creative_id`는 `ad_creatives.id`를 문자열화한 값입니다.
 
 | campaign_id | A creative | B creative |
 |---|---|---|
-| `camp_fresh_01` | `cr_fresh_A` | `cr_fresh_B` |
-| `camp_pet_01` | `cr_pet_A` | `cr_pet_B` |
-| `camp_digital_01` | `cr_digital_A` | `cr_digital_B` |
-| `camp_fashion_01` | `cr_fashion_A` | `cr_fashion_B` |
-
-### Placements
-
-총 4개 placement가 있습니다.
-
-```txt
-camp_fresh_01   → main_hero
-camp_pet_01     → main_hero
-camp_digital_01 → main_side_left
-camp_fashion_01 → main_side_right
-```
+| `camp_fresh_01` | `1` | `2` |
+| `camp_pet_01` | `3` | `4` |
+| `camp_digital_01` | `5` | `6` |
+| `camp_fashion_01` | `7` | `8` |
 
 ## Redis cache 정책
 

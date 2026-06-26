@@ -22,7 +22,7 @@ The MVP includes:
 
 - Main page ad decision API.
 - Three main page ad slots.
-- Campaign, creative, and placement data model.
+- Common schema based candidate read model.
 - Rule-based target filtering.
 - Priority-based campaign selection.
 - Deterministic A/B creative selection.
@@ -64,10 +64,10 @@ The MVP intentionally focuses on the main page because supporting main, detail, 
 
 ## 4. Data Model
 
-The ad model is divided into three layers.
+The runtime ad model is still exposed to the decision service as three layers.
 
 ```txt
-Campaign / Creative / Placement
+Candidate mapping / Campaign / Creative
 ```
 
 ### Campaign
@@ -83,18 +83,14 @@ Example campaigns:
 - Digital appliance event
 - Fashion promotion
 
-Campaign fields:
+Campaign fields after mapping:
 
 ```ts
 campaign_id
 name
 priority
 status
-target_category
-target_age_groups
-target_gender
-starts_at
-ends_at
+target
 ```
 
 ### Creative
@@ -103,7 +99,7 @@ Creative is the actual material rendered on the screen.
 
 Each campaign can have A/B creatives.
 
-Creative fields:
+Creative fields after mapping:
 
 ```ts
 creative_id
@@ -114,66 +110,55 @@ image_url
 target_url
 ```
 
-### Placement
+### Candidate Mapping
 
-Placement defines where a campaign can be shown.
+Candidate mapping defines where and for which target a campaign can be shown.
 
-Placement fields:
+Mapping fields after conversion:
 
 ```ts
 campaign_id
 slot_id
 weight
+priority
+target
 ```
 
-In the MVP, `weight` exists in the data model but is not used for campaign selection.
+In this phase, `weight` exists in the data model but is not used for campaign selection.
 
 ### Database Schema (Postgres)
 
-`database/schema.sql` is the sqldef target schema for the MVP. This file is the declarative target applied by sqldef, not an incremental migration.
+`database/schema.sql` is the sqldef target schema for local advertisement-server development. It contains the common tables this service directly reads:
 
-```sql
-CREATE TABLE campaign (
-  campaign_id text PRIMARY KEY,
-  name text NOT NULL,
-  priority integer NOT NULL,
-  status VARCHAR(20) NOT NULL,
-  target_category text,
-  target_age_groups text[],
-  target_gender text,
-  starts_at timestamptz,
-  ends_at timestamptz,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  CONSTRAINT chk_campaign_status CHECK (status = ANY (ARRAY['active', 'ended', 'paused']))
-);
-
-CREATE TABLE creative (
-  creative_id text PRIMARY KEY,
-  campaign_id text NOT NULL REFERENCES campaign (campaign_id),
-  variant VARCHAR(1) NOT NULL,
-  headline text NOT NULL,
-  image_url text NOT NULL,
-  target_url text NOT NULL,
-  CONSTRAINT chk_creative_variant CHECK (variant IN ('A', 'B'))
-);
-
-CREATE TABLE placement (
-  campaign_id text NOT NULL REFERENCES campaign (campaign_id),
-  slot_id text NOT NULL,
-  weight integer NOT NULL DEFAULT 100,
-  PRIMARY KEY (campaign_id, slot_id)
-);
-
-CREATE INDEX idx_placement_slot_id ON placement (slot_id);
-CREATE INDEX idx_creative_campaign_id ON creative (campaign_id);
+```txt
+projects
+campaigns
+coupons
+ad_creatives
+recommendation_results
+experiments
+segment_ad_mappings
 ```
 
-`target_age_groups` is a `text[]` array so one campaign can match multiple age groups. `target_gender` is nullable, but when it is set, MVP targeting reads it as an exact-match condition.
+The repository reads `segment_ad_mappings + campaigns + ad_creatives`, then the mapper converts common rows into the internal `CandidateCampaign` shape.
 
-Business identifiers such as `campaign_id` and `creative_id` remain `text` primary keys because meaningful IDs like `camp_fresh_01` and `cr_fresh_A` are used in seed data, cache keys, and tracking tokens. They are not auto-increment IDs shared or joined with other services' tables.
+ID mapping:
 
-Indexes follow the `idx_{table}_{column}` naming pattern.
+```txt
+campaigns.id                   -> DB join key
+campaigns.external_campaign_id -> API/token/hash campaign_id
+ad_creatives.id::text          -> API/token creative_id
+```
+
+Candidate mapping:
+
+```txt
+execution_hint_json.slot_id  -> placement.slot_id
+execution_hint_json.priority -> candidate.priority
+execution_hint_json.weight   -> placement.weight
+segment_json                 -> target
+payload_json.variant         -> creative.variant
+```
 
 ---
 
@@ -182,14 +167,14 @@ Indexes follow the `idx_{table}_{column}` naming pattern.
 The ad server narrows candidates in this order:
 
 ```txt
-Placement → Campaign → Creative
+Segment Ad Mapping → Campaign → Creative
 ```
 
-### Step 1. Placement Filtering
+### Step 1. Candidate Mapping Filtering
 
 The server receives requested slots.
 
-For each slot, it loads candidate campaigns that are allowed to appear in that slot.
+For each slot, it loads candidate campaigns whose `segment_ad_mappings.execution_hint_json.slot_id` matches that slot.
 
 Example:
 
@@ -207,7 +192,7 @@ Target rules:
 - Empty target fields are skipped.
 - Category is the primary condition.
 - Age and gender are optional supporting conditions.
-- If a campaign has `target_gender`, `context.gender` must exactly match it.
+- If a candidate target has `gender`, `context.gender` must exactly match it.
 - If `context.gender` is missing or null, gender-targeted campaigns do not match.
 - Fully empty targets are not allowed for personalized campaigns.
 
@@ -285,7 +270,7 @@ POST /v1/ad-decision
 - `user_id` may be an anonymous ID when the user is not logged in.
 - `context.category` is used as the primary targeting signal in the MVP.
 - `context.age_group` and `context.gender` are optional supporting request signals.
-- If a candidate campaign has `target_gender`, a missing or null `context.gender` does not match it.
+- If a candidate target has `gender`, a missing or null `context.gender` does not match it.
 
 ### Response
 
@@ -294,7 +279,7 @@ POST /v1/ad-decision
   "decisions": [
     {
       "slot_id": "main_hero",
-      "creative_id": "cr_fresh_B",
+      "creative_id": "2",
       "campaign_id": "camp_fresh_01",
       "variant": "B",
       "creative": {
@@ -346,7 +331,7 @@ Payload example:
   "project_id": "loopad-demo-shop",
   "slot_id": "main_hero",
   "campaign_id": "camp_fresh_01",
-  "creative_id": "cr_fresh_B",
+  "creative_id": "2",
   "variant": "B",
   "user_id": "user_123",
   "session_id": "session_456",
@@ -392,7 +377,7 @@ Example:
   "project_id": "loopad-demo-shop",
   "slot_id": "main_hero",
   "campaign_id": "camp_fresh_01",
-  "creative_id": "cr_fresh_B",
+  "creative_id": "2",
   "variant": "B",
   "user_id": "user_123",
   "session_id": "session_456"
@@ -417,7 +402,7 @@ Example event:
   "project_id": "loopad-demo-shop",
   "slot_id": "main_hero",
   "campaign_id": "camp_fresh_01",
-  "creative_id": "cr_fresh_B",
+  "creative_id": "2",
   "variant": "B",
   "user_id": "user_123",
   "session_id": "session_456"
@@ -428,7 +413,9 @@ Example event:
 
 ## 9. Demo Seed Data
 
-### Campaigns
+### Segment Ad Mappings
+
+`campaign_id` is read from `campaigns.external_campaign_id`. Slot, priority, weight, and target data are read from `segment_ad_mappings` JSON fields.
 
 | campaign_id | name | slot | priority | status | target |
 |---|---|---:|---:|---|---|
@@ -437,27 +424,18 @@ Example event:
 | camp_digital_01 | 디지털/가전 기획전 | main_side_left | 5 | active | category=digital |
 | camp_fashion_01 | 패션 기획전 | main_side_right | 5 | active | category=fashion / age=20s,30s / gender=female |
 
-### Placements
-
-| campaign_id | slot_id | weight |
-|---|---|---:|
-| camp_fresh_01 | main_hero | 100 |
-| camp_pet_01 | main_hero | 100 |
-| camp_digital_01 | main_side_left | 100 |
-| camp_fashion_01 | main_side_right | 100 |
-
 ### Creatives
 
 | creative_id | campaign_id | variant | headline | image_url | target_url |
 |---|---|---|---|---|---|
-| cr_fresh_A | camp_fresh_01 | A | 신선한 닭가슴살 30% 할인 | https://placehold.co/800x400?text=fresh-A | /category/fresh_food |
-| cr_fresh_B | camp_fresh_01 | B | 오늘의 신선특가 ✨ | https://placehold.co/800x400?text=fresh-B | /category/fresh_food |
-| cr_pet_A | camp_pet_01 | A | 우리 아이 간식 특가 | https://placehold.co/800x400?text=pet-A | /category/pet |
-| cr_pet_B | camp_pet_01 | B | 반려동물 필수템 모음 | https://placehold.co/800x400?text=pet-B | /category/pet |
-| cr_digital_A | camp_digital_01 | A | 신상 이어폰 입고 | https://placehold.co/400x400?text=digital-A | /category/digital |
-| cr_digital_B | camp_digital_01 | B | 가전 최대 50% | https://placehold.co/400x400?text=digital-B | /category/digital |
-| cr_fashion_A | camp_fashion_01 | A | 지금 많이 보는 데일리룩 | https://placehold.co/400x400?text=fashion-A | /category/fashion |
-| cr_fashion_B | camp_fashion_01 | B | 오늘의 패션 특가 | https://placehold.co/400x400?text=fashion-B | /category/fashion |
+| 1 | camp_fresh_01 | A | 신선한 닭가슴살 30% 할인 | https://placehold.co/800x400?text=fresh-A | /category/fresh_food |
+| 2 | camp_fresh_01 | B | 오늘의 신선특가 ✨ | https://placehold.co/800x400?text=fresh-B | /category/fresh_food |
+| 3 | camp_pet_01 | A | 우리 아이 간식 특가 | https://placehold.co/800x400?text=pet-A | /category/pet |
+| 4 | camp_pet_01 | B | 반려동물 필수템 모음 | https://placehold.co/800x400?text=pet-B | /category/pet |
+| 5 | camp_digital_01 | A | 신상 이어폰 입고 | https://placehold.co/400x400?text=digital-A | /category/digital |
+| 6 | camp_digital_01 | B | 가전 최대 50% | https://placehold.co/400x400?text=digital-B | /category/digital |
+| 7 | camp_fashion_01 | A | 지금 많이 보는 데일리룩 | https://placehold.co/400x400?text=fashion-A | /category/fashion |
+| 8 | camp_fashion_01 | B | 오늘의 패션 특가 | https://placehold.co/400x400?text=fashion-B | /category/fashion |
 
 ---
 

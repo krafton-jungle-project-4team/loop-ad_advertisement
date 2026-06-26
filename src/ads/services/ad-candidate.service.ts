@@ -1,13 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { AdCacheService } from '../../redis/ad-cache.service';
 import type { MainPageAdSlot } from '../constants/ad-slots.constant';
-import { CampaignRepository } from '../repositories/campaign.repository';
-import { CreativeRepository } from '../repositories/creative.repository';
-import { PlacementRepository } from '../repositories/placement.repository';
-import type {
-  CandidateCampaign,
-  Creative,
-} from '../types/ad-decision.types';
+import { AdCandidateRepository } from '../repositories/ad-candidate.repository';
+import { AdCandidateMapper } from './ad-candidate.mapper';
+import type { CandidateCampaign } from '../types/ad-decision.types';
 
 @Injectable()
 export class AdCandidateService {
@@ -15,9 +11,8 @@ export class AdCandidateService {
 
   constructor(
     private readonly adCacheService: AdCacheService,
-    private readonly placementRepository: PlacementRepository,
-    private readonly campaignRepository: CampaignRepository,
-    private readonly creativeRepository: CreativeRepository,
+    private readonly adCandidateRepository: AdCandidateRepository,
+    private readonly adCandidateMapper: AdCandidateMapper,
   ) {}
 
   async getCandidatesBySlots(
@@ -32,7 +27,10 @@ export class AdCandidateService {
         return cached;
       }
 
-      const loaded = await this.loadCandidatesFromPostgres(missingSlots);
+      const loaded = await this.loadCandidatesFromPostgres(
+        projectId,
+        missingSlots,
+      );
 
       await Promise.all(
         missingSlots.map(async (slot) => {
@@ -57,47 +55,20 @@ export class AdCandidateService {
         }`,
       );
 
-      return this.loadCandidatesFromPostgres(slots);
+      return this.loadCandidatesFromPostgres(projectId, slots);
     }
   }
 
   async loadCandidatesFromPostgres(
+    projectId: string,
     slots: MainPageAdSlot[],
   ): Promise<Map<MainPageAdSlot, CandidateCampaign[]>> {
-    const placements = await this.placementRepository.findBySlots(slots);
-    const campaignIds = placements.map((placement) => placement.campaign_id);
-    const [campaigns, creatives] = await Promise.all([
-      this.campaignRepository.findActiveByIds(campaignIds),
-      this.creativeRepository.findByCampaignIds(campaignIds),
-    ]);
-    const campaignById = new Map(
-      campaigns.map((campaign) => [campaign.campaign_id, campaign]),
-    );
-    const creativesByCampaign = this.groupCreativesByCampaign(creatives);
-    const result = new Map<MainPageAdSlot, CandidateCampaign[]>();
-
-    for (const slot of slots) {
-      result.set(slot, []);
-    }
-
-    for (const placement of placements) {
-      const campaign = campaignById.get(placement.campaign_id);
-
-      if (!campaign) {
-        continue;
-      }
-
-      const candidates = result.get(placement.slot_id) ?? [];
-      candidates.push({
-        ...campaign,
-        placement: {
-          slot_id: placement.slot_id,
-          weight: placement.weight,
-        },
-        creatives: creativesByCampaign.get(campaign.campaign_id) ?? [],
-      });
-      result.set(placement.slot_id, candidates);
-    }
+    const rows =
+      await this.adCandidateRepository.findActiveRowsByProjectAndSlots(
+        projectId,
+        slots,
+      );
+    const result = this.adCandidateMapper.toCandidatesBySlot(rows, slots);
 
     for (const candidates of result.values()) {
       candidates.sort((left, right) =>
@@ -106,23 +77,5 @@ export class AdCandidateService {
     }
 
     return result;
-  }
-
-  private groupCreativesByCampaign(
-    creatives: Creative[],
-  ): Map<string, Creative[]> {
-    const grouped = new Map<string, Creative[]>();
-
-    for (const creative of creatives) {
-      const bucket = grouped.get(creative.campaign_id) ?? [];
-      bucket.push(creative);
-      grouped.set(creative.campaign_id, bucket);
-    }
-
-    for (const bucket of grouped.values()) {
-      bucket.sort((left, right) => left.variant.localeCompare(right.variant));
-    }
-
-    return grouped;
   }
 }
