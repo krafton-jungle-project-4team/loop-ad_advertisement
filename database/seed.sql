@@ -30,6 +30,7 @@ INSERT INTO ad_creatives (
   id,
   project_id,
   campaign_id,
+  external_creative_id,
   action_id,
   creative_type,
   title,
@@ -38,14 +39,14 @@ INSERT INTO ad_creatives (
   payload_json,
   status
 ) VALUES
-  (1, 'loopad-demo-shop', 1, 'show_fresh_A', 'banner', '신선한 닭가슴살 30% 할인', 'https://placehold.co/800x400?text=fresh-A', '/category/fresh_food', '{"variant":"A"}'::jsonb, 'active'),
-  (2, 'loopad-demo-shop', 1, 'show_fresh_B', 'banner', '오늘의 신선특가 ✨', 'https://placehold.co/800x400?text=fresh-B', '/category/fresh_food', '{"variant":"B"}'::jsonb, 'active'),
-  (3, 'loopad-demo-shop', 2, 'show_pet_A', 'banner', '우리 냥이 간식 특가', 'https://placehold.co/800x400?text=pet-A', '/category/pet', '{"variant":"A"}'::jsonb, 'active'),
-  (4, 'loopad-demo-shop', 2, 'show_pet_B', 'banner', '반려동물 필수템 모음', 'https://placehold.co/800x400?text=pet-B', '/category/pet', '{"variant":"B"}'::jsonb, 'active'),
-  (5, 'loopad-demo-shop', 3, 'show_digital_A', 'banner', '신상 이어폰 입고', 'https://placehold.co/400x400?text=digital-A', '/category/digital', '{"variant":"A"}'::jsonb, 'active'),
-  (6, 'loopad-demo-shop', 3, 'show_digital_B', 'banner', '가전 최대 50%', 'https://placehold.co/400x400?text=digital-B', '/category/digital', '{"variant":"B"}'::jsonb, 'active'),
-  (7, 'loopad-demo-shop', 4, 'show_fashion_A', 'banner', '지금 많이 보는 데일리룩', 'https://placehold.co/400x400?text=fashion-A', '/category/fashion', '{"variant":"A"}'::jsonb, 'active'),
-  (8, 'loopad-demo-shop', 4, 'show_fashion_B', 'banner', '오늘의 패션 특가', 'https://placehold.co/400x400?text=fashion-B', '/category/fashion', '{"variant":"B"}'::jsonb, 'active');
+  (1, 'loopad-demo-shop', 1, 'cr_fresh_A', 'show_fresh_A', 'banner', '신선한 닭가슴살 30% 할인', 'https://placehold.co/800x400?text=fresh-A', '/category/fresh_food', '{"variant":"A"}'::jsonb, 'active'),
+  (2, 'loopad-demo-shop', 1, 'cr_fresh_B', 'show_fresh_B', 'banner', '오늘의 신선특가 ✨', 'https://placehold.co/800x400?text=fresh-B', '/category/fresh_food', '{"variant":"B"}'::jsonb, 'active'),
+  (3, 'loopad-demo-shop', 2, 'cr_pet_A', 'show_pet_A', 'banner', '우리 냥이 간식 특가', 'https://placehold.co/800x400?text=pet-A', '/category/pet', '{"variant":"A"}'::jsonb, 'active'),
+  (4, 'loopad-demo-shop', 2, 'cr_pet_B', 'show_pet_B', 'banner', '반려동물 필수템 모음', 'https://placehold.co/800x400?text=pet-B', '/category/pet', '{"variant":"B"}'::jsonb, 'active'),
+  (5, 'loopad-demo-shop', 3, 'cr_digital_A', 'show_digital_A', 'banner', '신상 이어폰 입고', 'https://placehold.co/400x400?text=digital-A', '/category/digital', '{"variant":"A"}'::jsonb, 'active'),
+  (6, 'loopad-demo-shop', 3, 'cr_digital_B', 'show_digital_B', 'banner', '가전 최대 50%', 'https://placehold.co/400x400?text=digital-B', '/category/digital', '{"variant":"B"}'::jsonb, 'active'),
+  (7, 'loopad-demo-shop', 4, 'cr_fashion_A', 'show_fashion_A', 'banner', '지금 많이 보는 데일리룩', 'https://placehold.co/400x400?text=fashion-A', '/category/fashion', '{"variant":"A"}'::jsonb, 'active'),
+  (8, 'loopad-demo-shop', 4, 'cr_fashion_B', 'show_fashion_B', 'banner', '오늘의 패션 특가', 'https://placehold.co/400x400?text=fashion-B', '/category/fashion', '{"variant":"B"}'::jsonb, 'active');
 
 INSERT INTO recommendation_results (
   id,

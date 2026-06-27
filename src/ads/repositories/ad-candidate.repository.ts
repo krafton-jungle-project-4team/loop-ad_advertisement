@@ -7,7 +7,7 @@ export interface AdCandidateRow {
   segment_json: unknown;
   execution_hint_json: unknown;
   campaign_pk: string;
-  campaign_id: string;
+  campaign_id: string | null;
   campaign_name: string;
   campaign_status: string;
   creative_id: string | null;
@@ -38,10 +38,10 @@ export class AdCandidateRepository {
         mapping.segment_json,
         mapping.execution_hint_json,
         campaign.id::text AS campaign_pk,
-        COALESCE(campaign.external_campaign_id, campaign.id::text) AS campaign_id,
+        campaign.external_campaign_id AS campaign_id,
         campaign.name AS campaign_name,
         campaign.status AS campaign_status,
-        creative.id::text AS creative_id,
+        creative.external_creative_id AS creative_id,
         creative.payload_json AS creative_payload_json,
         creative.title AS creative_headline,
         creative.image_url AS creative_image_url,

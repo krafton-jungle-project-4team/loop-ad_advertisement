@@ -26,7 +26,7 @@ describe('AdTokenService', () => {
     project_id: 'loopad-demo-shop',
     slot_id: 'main_hero',
     campaign_id: 'camp_fresh_01',
-    creative_id: '1',
+    creative_id: 'cr_fresh_A',
     variant: 'A',
     user_id: 'user_001',
     session_id: 'session_001',

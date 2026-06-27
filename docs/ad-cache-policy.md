@@ -79,7 +79,7 @@ Example:
     },
     "creatives": [
       {
-        "creative_id": "1",
+        "creative_id": "cr_fresh_A",
         "campaign_id": "camp_fresh_01",
         "variant": "A",
         "headline": "신선한 닭가슴살 30% 할인",
@@ -87,7 +87,7 @@ Example:
         "target_url": "/category/fresh_food"
       },
       {
-        "creative_id": "2",
+        "creative_id": "cr_fresh_B",
         "campaign_id": "camp_fresh_01",
         "variant": "B",
         "headline": "오늘의 신선특가 ✨",

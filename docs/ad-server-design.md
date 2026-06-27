@@ -147,8 +147,11 @@ ID mapping:
 ```txt
 campaigns.id                   -> DB join key
 campaigns.external_campaign_id -> API/token/hash campaign_id
-ad_creatives.id::text          -> API/token creative_id
+ad_creatives.id                -> DB join key
+ad_creatives.external_creative_id -> API/token creative_id
 ```
+
+`ad_creatives.external_creative_id` is nullable for migration compatibility in the current schema, but application mapping treats it as required. After existing rows are backfilled, promote it to `NOT NULL` with `UNIQUE(project_id, external_creative_id)`.
 
 Candidate mapping:
 
@@ -167,14 +170,14 @@ payload_json.variant         -> creative.variant
 The ad server narrows candidates in this order:
 
 ```txt
-Segment Ad Mapping → Campaign → Creative
+Placement → Campaign → Creative
 ```
 
-### Step 1. Candidate Mapping Filtering
+### Step 1. Placement Filtering
 
 The server receives requested slots.
 
-For each slot, it loads candidate campaigns whose `segment_ad_mappings.execution_hint_json.slot_id` matches that slot.
+For each slot, it loads candidate campaigns whose placement read model is represented by `segment_ad_mappings.execution_hint_json.slot_id`.
 
 Example:
 
@@ -279,7 +282,7 @@ POST /v1/ad-decision
   "decisions": [
     {
       "slot_id": "main_hero",
-      "creative_id": "2",
+      "creative_id": "cr_fresh_B",
       "campaign_id": "camp_fresh_01",
       "variant": "B",
       "creative": {
@@ -331,7 +334,7 @@ Payload example:
   "project_id": "loopad-demo-shop",
   "slot_id": "main_hero",
   "campaign_id": "camp_fresh_01",
-  "creative_id": "2",
+  "creative_id": "cr_fresh_B",
   "variant": "B",
   "user_id": "user_123",
   "session_id": "session_456",
@@ -377,7 +380,7 @@ Example:
   "project_id": "loopad-demo-shop",
   "slot_id": "main_hero",
   "campaign_id": "camp_fresh_01",
-  "creative_id": "2",
+  "creative_id": "cr_fresh_B",
   "variant": "B",
   "user_id": "user_123",
   "session_id": "session_456"
@@ -402,7 +405,7 @@ Example event:
   "project_id": "loopad-demo-shop",
   "slot_id": "main_hero",
   "campaign_id": "camp_fresh_01",
-  "creative_id": "2",
+  "creative_id": "cr_fresh_B",
   "variant": "B",
   "user_id": "user_123",
   "session_id": "session_456"
@@ -413,9 +416,9 @@ Example event:
 
 ## 9. Demo Seed Data
 
-### Segment Ad Mappings
+### Placements
 
-`campaign_id` is read from `campaigns.external_campaign_id`. Slot, priority, weight, and target data are read from `segment_ad_mappings` JSON fields.
+`campaign_id` is read from `campaigns.external_campaign_id`. Slot, priority, weight, and target data are read from `segment_ad_mappings` JSON fields as the placement read model.
 
 | campaign_id | name | slot | priority | status | target |
 |---|---|---:|---:|---|---|
@@ -428,14 +431,14 @@ Example event:
 
 | creative_id | campaign_id | variant | headline | image_url | target_url |
 |---|---|---|---|---|---|
-| 1 | camp_fresh_01 | A | 신선한 닭가슴살 30% 할인 | https://placehold.co/800x400?text=fresh-A | /category/fresh_food |
-| 2 | camp_fresh_01 | B | 오늘의 신선특가 ✨ | https://placehold.co/800x400?text=fresh-B | /category/fresh_food |
-| 3 | camp_pet_01 | A | 우리 아이 간식 특가 | https://placehold.co/800x400?text=pet-A | /category/pet |
-| 4 | camp_pet_01 | B | 반려동물 필수템 모음 | https://placehold.co/800x400?text=pet-B | /category/pet |
-| 5 | camp_digital_01 | A | 신상 이어폰 입고 | https://placehold.co/400x400?text=digital-A | /category/digital |
-| 6 | camp_digital_01 | B | 가전 최대 50% | https://placehold.co/400x400?text=digital-B | /category/digital |
-| 7 | camp_fashion_01 | A | 지금 많이 보는 데일리룩 | https://placehold.co/400x400?text=fashion-A | /category/fashion |
-| 8 | camp_fashion_01 | B | 오늘의 패션 특가 | https://placehold.co/400x400?text=fashion-B | /category/fashion |
+| cr_fresh_A | camp_fresh_01 | A | 신선한 닭가슴살 30% 할인 | https://placehold.co/800x400?text=fresh-A | /category/fresh_food |
+| cr_fresh_B | camp_fresh_01 | B | 오늘의 신선특가 ✨ | https://placehold.co/800x400?text=fresh-B | /category/fresh_food |
+| cr_pet_A | camp_pet_01 | A | 우리 아이 간식 특가 | https://placehold.co/800x400?text=pet-A | /category/pet |
+| cr_pet_B | camp_pet_01 | B | 반려동물 필수템 모음 | https://placehold.co/800x400?text=pet-B | /category/pet |
+| cr_digital_A | camp_digital_01 | A | 신상 이어폰 입고 | https://placehold.co/400x400?text=digital-A | /category/digital |
+| cr_digital_B | camp_digital_01 | B | 가전 최대 50% | https://placehold.co/400x400?text=digital-B | /category/digital |
+| cr_fashion_A | camp_fashion_01 | A | 지금 많이 보는 데일리룩 | https://placehold.co/400x400?text=fashion-A | /category/fashion |
+| cr_fashion_B | camp_fashion_01 | B | 오늘의 패션 특가 | https://placehold.co/400x400?text=fashion-B | /category/fashion |
 
 ---
 

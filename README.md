@@ -33,10 +33,10 @@ main_side_right
 광고 결정은 아래 순서로 진행됩니다.
 
 ```txt
-Segment Ad Mapping → Campaign → Creative
+Placement → Campaign → Creative
 ```
 
-1. Segment Ad Mapping: `execution_hint_json.slot_id`로 요청 슬롯에 노출 가능한 캠페인 후보를 찾습니다.
+1. Placement: 공용 `segment_ad_mappings` read model의 `execution_hint_json.slot_id`로 요청 슬롯에 노출 가능한 캠페인 후보를 찾습니다.
 2. Campaign: 사용자 context와 캠페인 target 조건을 비교해 매칭되는 캠페인을 고릅니다.
 3. Creative: 선택된 캠페인 안에서 A/B creative variant를 결정합니다.
 
@@ -199,7 +199,7 @@ Body에는 이것만 붙여넣습니다.
 
 정상이라면 `main_hero` 슬롯에 대해 `camp_fresh_01` 캠페인이 선택됩니다.
 
-`user_001:camp_fresh_01`의 MurmurHash3 bucket은 `44`이고, `44 < 50`이므로 variant는 `A`입니다. 따라서 creative는 공용 스키마의 `ad_creatives.id` 값인 `"1"`이 나오는 것이 정상입니다.
+`user_001:camp_fresh_01`의 MurmurHash3 bucket은 `44`이고, `44 < 50`이므로 variant는 `A`입니다. 따라서 creative는 외부 creative ID인 `cr_fresh_A`가 나오는 것이 정상입니다.
 
 응답 예시:
 
@@ -208,7 +208,7 @@ Body에는 이것만 붙여넣습니다.
   "decisions": [
     {
       "slot_id": "main_hero",
-      "creative_id": "1",
+      "creative_id": "cr_fresh_A",
       "campaign_id": "camp_fresh_01",
       "variant": "A",
       "creative": {
@@ -325,7 +325,7 @@ Body:
   "decisions": [
     {
       "slot_id": "main_hero",
-      "creative_id": "1",
+      "creative_id": "cr_fresh_A",
       "campaign_id": "camp_fresh_01",
       "variant": "A",
       "creative": {
@@ -376,9 +376,9 @@ Body:
 
 `database/seed.sql`은 demo 검증용 데이터를 넣습니다.
 
-### Segment Ad Mappings
+### Placements
 
-`campaigns.external_campaign_id`가 API와 token의 `campaign_id`로 쓰이고, 슬롯/priority/target은 `segment_ad_mappings`의 JSON 필드에서 읽습니다.
+`campaigns.external_campaign_id`가 API와 token의 `campaign_id`로 쓰입니다. 슬롯/priority/target은 공용 DB의 `segment_ad_mappings` JSON 필드를 placement read model로 읽습니다.
 
 | campaign_id | slot | priority | target |
 |---|---|---:|---|
@@ -389,14 +389,14 @@ Body:
 
 ### Creatives
 
-각 campaign은 A/B creative 2개를 가집니다. 총 8개입니다. `creative_id`는 `ad_creatives.id`를 문자열화한 값입니다.
+각 campaign은 A/B creative 2개를 가집니다. 총 8개입니다. `creative_id`는 `ad_creatives.external_creative_id` 값입니다. 이 컬럼은 migration 호환을 위해 현재 nullable이지만, 앱은 required처럼 검증합니다. Backfill 이후 `NOT NULL`과 `UNIQUE(project_id, external_creative_id)`로 올리는 후속 작업이 필요합니다.
 
 | campaign_id | A creative | B creative |
 |---|---|---|
-| `camp_fresh_01` | `1` | `2` |
-| `camp_pet_01` | `3` | `4` |
-| `camp_digital_01` | `5` | `6` |
-| `camp_fashion_01` | `7` | `8` |
+| `camp_fresh_01` | `cr_fresh_A` | `cr_fresh_B` |
+| `camp_pet_01` | `cr_pet_A` | `cr_pet_B` |
+| `camp_digital_01` | `cr_digital_A` | `cr_digital_B` |
+| `camp_fashion_01` | `cr_fashion_A` | `cr_fashion_B` |
 
 ## Redis cache 정책
 
@@ -437,6 +437,8 @@ Redis miss
 ```
 
 Redis가 일시적으로 unavailable이면 서버는 Postgres fallback을 시도합니다. Postgres도 사용할 수 없으면 ad decision API는 정상적으로 결정할 수 없습니다.
+
+`creative_id` 값 의미가 바뀐 뒤에는 기존 Redis candidate cache에 숫자 ID가 남아 있을 수 있습니다. 검증 전에는 `tenant:loopad-demo-shop:slot:{slot_id}:candidates` 키를 삭제하거나 로컬 Redis에서 `FLUSHDB`를 실행합니다.
 
 ## 테스트와 검증
 

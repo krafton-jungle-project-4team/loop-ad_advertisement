@@ -54,6 +54,7 @@ CREATE TABLE ad_creatives (
   project_id VARCHAR(128) NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
   campaign_id BIGINT REFERENCES campaigns (id) ON DELETE SET NULL,
   coupon_id BIGINT REFERENCES coupons (id) ON DELETE SET NULL,
+  external_creative_id VARCHAR(255),
   action_id VARCHAR(128),
   creative_type VARCHAR(64) NOT NULL DEFAULT 'banner',
   title VARCHAR(255),

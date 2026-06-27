@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import { AdCandidateMapper } from './ad-candidate.mapper';
 import type { AdCandidateRow } from '../repositories/ad-candidate.repository';
 
@@ -18,7 +19,7 @@ function row(overrides: Partial<AdCandidateRow> = {}): AdCandidateRow {
     campaign_id: 'camp_fresh_01',
     campaign_name: 'fresh',
     campaign_status: 'active',
-    creative_id: '1',
+    creative_id: 'cr_fresh_A',
     creative_payload_json: {
       variant: 'A',
     },
@@ -31,13 +32,22 @@ function row(overrides: Partial<AdCandidateRow> = {}): AdCandidateRow {
 
 describe('AdCandidateMapper', () => {
   const mapper = new AdCandidateMapper();
+  let warnSpy: jest.SpyInstance;
+
+  beforeEach(() => {
+    warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+  });
+
+  afterEach(() => {
+    warnSpy.mockRestore();
+  });
 
   it('maps common schema rows into candidate campaigns', () => {
     const result = mapper.toCandidatesBySlot(
       [
         row(),
         row({
-          creative_id: '2',
+          creative_id: 'cr_fresh_B',
           creative_payload_json: { variant: 'B' },
           creative_headline: 'fresh B',
           creative_image_url: 'https://placehold.co/800x400?text=fresh-B',
@@ -63,7 +73,7 @@ describe('AdCandidateMapper', () => {
         },
         creatives: [
           {
-            creative_id: '1',
+            creative_id: 'cr_fresh_A',
             campaign_id: 'camp_fresh_01',
             variant: 'A',
             headline: 'fresh A',
@@ -71,7 +81,7 @@ describe('AdCandidateMapper', () => {
             target_url: '/category/fresh_food',
           },
           {
-            creative_id: '2',
+            creative_id: 'cr_fresh_B',
             campaign_id: 'camp_fresh_01',
             variant: 'B',
             headline: 'fresh B',
@@ -83,7 +93,7 @@ describe('AdCandidateMapper', () => {
     ]);
   });
 
-  it('uses common schema defaults and converts a single age_group to age_groups', () => {
+  it('defaults weight and converts a single age_group to age_groups', () => {
     const result = mapper.toCandidatesBySlot(
       [
         row({
@@ -94,11 +104,12 @@ describe('AdCandidateMapper', () => {
           },
           execution_hint_json: {
             slot_id: 'main_side_left',
+            priority: 5,
           },
           campaign_pk: '3',
-          campaign_id: '3',
+          campaign_id: 'camp_digital_01',
           campaign_name: 'digital',
-          creative_id: '5',
+          creative_id: 'cr_digital_A',
           creative_headline: 'digital A',
           creative_image_url: 'https://placehold.co/400x400?text=digital-A',
           creative_target_url: '/category/digital',
@@ -108,8 +119,8 @@ describe('AdCandidateMapper', () => {
     );
 
     expect(result.get('main_side_left')?.[0]).toMatchObject({
-      campaign_id: '3',
-      priority: 0,
+      campaign_id: 'camp_digital_01',
+      priority: 5,
       target: {
         category: 'digital',
         age_groups: ['20s'],
@@ -121,21 +132,21 @@ describe('AdCandidateMapper', () => {
       },
       creatives: [
         {
-          creative_id: '5',
+          creative_id: 'cr_digital_A',
           variant: 'A',
         },
       ],
     });
   });
 
-  it('excludes invalid creatives while keeping the mapped candidate', () => {
+  it('excludes candidates without valid creatives', () => {
     const result = mapper.toCandidatesBySlot(
       [
         row({
           creative_payload_json: { variant: 'C' },
         }),
         row({
-          creative_id: '2',
+          creative_id: 'cr_fresh_B',
           creative_payload_json: { variant: 'B' },
           creative_image_url: null,
         }),
@@ -143,8 +154,7 @@ describe('AdCandidateMapper', () => {
       ['main_hero'],
     );
 
-    expect(result.get('main_hero')).toHaveLength(1);
-    expect(result.get('main_hero')?.[0]?.creatives).toEqual([]);
+    expect(result.get('main_hero')).toEqual([]);
   });
 
   it('skips rows without a supported main page slot', () => {
@@ -162,5 +172,52 @@ describe('AdCandidateMapper', () => {
     );
 
     expect(result.get('main_hero')).toEqual([]);
+  });
+
+  it('skips invalid candidate rows and logs a warning summary', () => {
+    const result = mapper.toCandidatesBySlot(
+      [
+        row({
+          mapping_id: 'missing-campaign',
+          campaign_id: null,
+        }),
+        row({
+          mapping_id: 'missing-priority',
+          execution_hint_json: {
+            slot_id: 'main_hero',
+            weight: 100,
+          },
+        }),
+        row({
+          mapping_id: 'missing-creative',
+          creative_id: null,
+        }),
+      ],
+      ['main_hero'],
+    );
+    const warningPayload = JSON.parse(warnSpy.mock.calls.at(-1)?.[0] as string);
+
+    expect(result.get('main_hero')).toEqual([]);
+    expect(warningPayload).toMatchObject({
+      message: 'Skipped invalid ad candidate rows',
+      skipped: {
+        missing_external_campaign_id: {
+          count: 1,
+          sample_mapping_ids: ['missing-campaign'],
+        },
+        missing_priority: {
+          count: 1,
+          sample_mapping_ids: ['missing-priority'],
+        },
+        missing_external_creative_id: {
+          count: 1,
+          sample_mapping_ids: ['missing-creative'],
+        },
+        no_valid_creative: {
+          count: 1,
+          sample_mapping_ids: ['missing-creative'],
+        },
+      },
+    });
   });
 });
