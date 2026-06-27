@@ -2,7 +2,7 @@
 
 LoopAd 데모 쇼핑 서비스의 MVP 광고 서버입니다.
 
-이 서버의 역할은 메인 페이지 광고 슬롯마다 어떤 광고를 보여줄지 빠르게 결정하는 것입니다. MVP 범위는 광고 플랫폼 전체가 아니라, 데모 쇼핑 서비스의 메인 페이지 광고 노출과 클릭 추적을 검증하는 데 집중합니다.
+이 서버의 역할은 메인 페이지 광고 슬롯마다 어떤 광고를 보여줄지 빠르게 결정하는 것입니다. MVP 범위는 광고 플랫폼 전체가 아니라, 데모 쇼핑 서비스의 메인 페이지 광고 노출 결정을 검증하는 데 집중합니다.
 
 ## 프로젝트 개요
 
@@ -14,7 +14,6 @@ LoopAd 데모 쇼핑 서비스의 MVP 광고 서버입니다.
 - Package manager: npm
 - Main API:
   - `POST /v1/ad-decision`
-  - `POST /v1/ad-click`
 - Health check:
   - `GET /health`
 
@@ -62,10 +61,7 @@ bucket < 50 → A
 bucket >= 50 → B
 ```
 
-tracking token은 HMAC-SHA256 signed self-contained token입니다.   
-토큰은 암호화된 값이 아니라 서명된 값이므로, payload에는 PII나 secret을 넣으면 안 됩니다.
-   
-역시 단독 구현이라 이벤트 파이프라인이 없어서 HMAC-SHA256 signed self-contained token를 선택했습니다.
+이 서버는 클릭 추적을 담당하지 않습니다. `/v1/ad-decision`은 광고 결정 결과만 반환하며, signed tracking token을 만들지 않습니다.
 
 ## 로컬 실행
 
@@ -120,7 +116,6 @@ LOOPAD_AURORA_DATABASE=loopad_ad_decision
 LOOPAD_AURORA_USERNAME=loopad
 LOOPAD_AURORA_PASSWORD=loopad
 LOOPAD_REDIS_URL=redis://127.0.0.1:6379
-HMAC_SECRET=replace-me-with-a-local-secret
 
 PGHOST=127.0.0.1
 PGPORT=55432
@@ -130,7 +125,7 @@ PGDATABASE=loopad_ad_decision
 PGSSLMODE=disable
 ```
 
-`LOOPAD_*`, `PORT`, `HMAC_SECRET` 중 하나라도 없거나 형식이 틀리면 서버가 시작 시점에 실패합니다.
+`LOOPAD_*`, `PORT` 중 하나라도 없거나 형식이 틀리면 서버가 시작 시점에 실패합니다.
 
 ### 4. DB schema 적용 및 seed 입력
 
@@ -215,14 +210,11 @@ Body에는 이것만 붙여넣습니다.
         "image_url": "https://placehold.co/800x400?text=fresh-A",
         "target_url": "/category/fresh_food",
         "headline": "신선한 닭가슴살 30% 할인"
-      },
-      "tracking_token": "<non-empty signed token>"
+      }
     }
   ]
 }
 ```
-
-`tracking_token`은 요청 시점의 `issued_at`을 포함하므로 요청할 때마다 값이 달라질 수 있습니다. 비어 있지 않은 문자열이면 정상입니다.
 
 ### 빈 슬롯 테스트
 
@@ -256,45 +248,15 @@ Postman에서 Body를 아래처럼 바꿔서 보냅니다.
       "creative_id": null,
       "campaign_id": null,
       "variant": null,
-      "creative": null,
-      "tracking_token": null
+      "creative": null
     }
   ]
 }
 ```
 
-## Click API 테스트
+## Click API
 
-`/v1/ad-decision` 응답에서 받은 `tracking_token`을 `/v1/ad-click`으로 보냅니다.
-
-Postman 설정:
-
-```txt
-Method: POST
-URL: http://localhost:8080/v1/ad-click
-Headers:
-  Content-Type: application/json
-Body:
-  raw 선택 → JSON 선택
-```
-
-Body:
-
-```json
-{
-  "tracking_token": "<ad-decision 응답에서 받은 tracking_token>"
-}
-```
-
-정상 응답:
-
-```json
-{
-  "ok": true
-}
-```
-
-서버는 tracking token의 signature를 검증한 뒤, token payload에서 campaign, creative, variant, slot 정보를 복원하고 `ad_click` 이벤트를 emit합니다. MVP에서는 실제 이벤트 파이프라인 대신 logging 구현을 사용합니다.
+이 서버는 클릭 추적 API를 제공하지 않습니다. `POST /v1/ad-click`은 등록되지 않은 endpoint이며, 클릭 추적은 다른 서비스의 책임입니다.
 
 ## API 규칙
 
@@ -332,8 +294,7 @@ Body:
         "image_url": "https://placehold.co/800x400?text=fresh-A",
         "target_url": "/category/fresh_food",
         "headline": "신선한 닭가슴살 30% 할인"
-      },
-      "tracking_token": "<non-empty signed token>"
+      }
     }
   ]
 }
@@ -347,30 +308,9 @@ Body:
   "creative_id": null,
   "campaign_id": null,
   "variant": null,
-  "creative": null,
-  "tracking_token": null
+  "creative": null
 }
 ```
-
-### POST /v1/ad-click
-
-요청:
-
-```json
-{
-  "tracking_token": "<signed tracking token>"
-}
-```
-
-응답:
-
-```json
-{
-  "ok": true
-}
-```
-
-서명이 틀리거나 형식이 잘못된 token은 `401 Unauthorized`로 거절됩니다.
 
 ## Seed 데이터
 
@@ -378,7 +318,7 @@ Body:
 
 ### Placements
 
-`campaigns.external_campaign_id`가 API와 token의 `campaign_id`로 쓰입니다. 슬롯/priority/target은 공용 DB의 `segment_ad_mappings` JSON 필드를 placement read model로 읽습니다.
+`campaigns.external_campaign_id`가 API의 `campaign_id`로 쓰입니다. 슬롯/priority/target은 공용 DB의 `segment_ad_mappings` JSON 필드를 placement read model로 읽습니다.
 
 | campaign_id | slot | priority | target |
 |---|---|---:|---|
@@ -428,7 +368,6 @@ Redis hit
 → target filtering
 → priority selection
 → deterministic variant selection
-→ tracking token generation
 
 Redis miss
 → query Postgres
@@ -481,7 +420,7 @@ set +a
 
 ### 필수 env 누락
 
-이 서버는 시작 시점에 필수 env를 검증합니다. `LOOPAD_*`, `PORT`, `HMAC_SECRET` 중 하나라도 없거나 형식이 틀리면 서버가 빠르게 실패합니다.
+이 서버는 시작 시점에 필수 env를 검증합니다. `LOOPAD_*`, `PORT` 중 하나라도 없거나 형식이 틀리면 서버가 빠르게 실패합니다.
 
 ### Postgres 포트 혼동
 

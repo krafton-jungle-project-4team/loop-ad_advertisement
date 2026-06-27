@@ -27,9 +27,7 @@ The MVP includes:
 - Priority-based campaign selection.
 - Deterministic A/B creative selection.
 - Redis candidate cache.
-- Tracking token generation.
-- Click endpoint for restoring tracking token data.
-- Impression and click event emit interface.
+- Impression event emit interface.
 
 ### Excluded
 
@@ -43,6 +41,7 @@ The MVP excludes:
 - Same-priority campaign competition.
 - Kafka/Kinesis integration implementation.
 - Analytics consumer implementation.
+- Click tracking.
 - Projector-based Redis cache updates.
 - Admin UI for campaign management.
 
@@ -289,16 +288,14 @@ POST /v1/ad-decision
         "image_url": "https://placehold.co/800x400?text=fresh-B",
         "target_url": "/category/fresh_food",
         "headline": "오늘의 신선특가 ✨"
-      },
-      "tracking_token": "base64url(payload).base64url(signature)"
+      }
     },
     {
       "slot_id": "main_side_left",
       "creative_id": null,
       "campaign_id": null,
       "variant": null,
-      "creative": null,
-      "tracking_token": null
+      "creative": null
     }
   ]
 }
@@ -309,53 +306,25 @@ POST /v1/ad-decision
 - The response contains one decision per requested slot.
 - If no candidate matches, return a null decision.
 - The server must not force a fallback ad unless explicitly required.
-- Each non-null decision must include a tracking token.
 
 ---
 
-## 7. Tracking Token
+## 7. Click Tracking Boundary
 
-The tracking token connects ad decision, impression, and click events.
-
-The MVP uses an HMAC-SHA256 signed self-contained token.
-
-Tracking-token signing and A/B variant hashing are independent. Tracking tokens use HMAC-SHA256 for integrity, while A/B selection uses MurmurHash3 x86 32-bit with seed `0`.
-
-Format:
-
-```txt
-base64url(payload).base64url(signature)
-```
-
-Payload example:
-
-```json
-{
-  "project_id": "loopad-demo-shop",
-  "slot_id": "main_hero",
-  "campaign_id": "camp_fresh_01",
-  "creative_id": "cr_fresh_B",
-  "variant": "B",
-  "user_id": "user_123",
-  "session_id": "session_456",
-  "issued_at": 1710000000
-}
-```
+This server does not provide click tracking.
 
 Rules:
 
-- The token is signed, not encrypted.
-- `user_id` and `session_id` are anonymous identifiers and may be included in the payload.
-- The payload must not contain PII or secrets.
-- The server verifies the signature before trusting the token.
-- The MVP does not persist issued tokens.
-- Future versions may move to opaque reference tokens.
+- Do not issue signed tracking tokens from the ad decision API.
+- Do not expose `POST /v1/ad-click`.
+- Do not add token-signing secrets to this service.
+- Click tracking, if needed, is owned by another service.
 
 ---
 
 ## 8. Event Emit Interface
 
-The ad server defines an event emit interface for impressions and clicks.
+The ad server defines an event emit interface for impressions.
 
 MVP behavior:
 
@@ -386,33 +355,6 @@ Example:
   "session_id": "session_456"
 }
 ```
-
-### Click Event
-
-The click endpoint decodes and verifies the tracking token, then emits an ad click event.
-
-Endpoint:
-
-```http
-POST /v1/ad-click
-```
-
-Example event:
-
-```json
-{
-  "event_type": "ad_click",
-  "project_id": "loopad-demo-shop",
-  "slot_id": "main_hero",
-  "campaign_id": "camp_fresh_01",
-  "creative_id": "cr_fresh_B",
-  "variant": "B",
-  "user_id": "user_123",
-  "session_id": "session_456"
-}
-```
-
----
 
 ## 9. Demo Seed Data
 
@@ -509,4 +451,3 @@ After the MVP, the server may be extended with:
 - Impression deduplication.
 - Real analytics pipeline integration.
 - Recommendation server integration.
-- Opaque tracking tokens.

@@ -16,7 +16,6 @@ const testConfig: AppConfig = {
   redis: {
     url: 'redis://127.0.0.1:6379',
   },
-  hmacSecret: 'test-secret',
 };
 
 describe('LoggingAdEventEmitterService', () => {

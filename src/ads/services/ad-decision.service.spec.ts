@@ -1,32 +1,13 @@
 import { Logger } from '@nestjs/common';
-import type { AppConfig } from '../../config/app-config';
 import { AdCandidateService } from './ad-candidate.service';
 import { AdDecisionService } from './ad-decision.service';
 import { AdEventEmitter } from './ad-event-emitter.service';
 import { AdTargetingService } from './ad-targeting.service';
-import { AdTokenService } from './ad-token.service';
 import { AdVariantService } from './ad-variant.service';
 import type {
   AdDecisionRequest,
   CandidateCampaign,
 } from '../types/ad-decision.types';
-
-const testConfig: AppConfig = {
-  env: 'test',
-  serviceId: 'advertisement-api',
-  port: 8080,
-  postgres: {
-    host: '127.0.0.1',
-    port: 55432,
-    database: 'loopad_ad_decision',
-    username: 'loopad',
-    password: 'loopad',
-  },
-  redis: {
-    url: 'redis://127.0.0.1:6379',
-  },
-  hmacSecret: 'test-secret',
-};
 
 function creative(campaignId: string, variant: 'A' | 'B') {
   return {
@@ -121,7 +102,6 @@ function createService(candidates = seedCandidates) {
     candidateService,
     new AdTargetingService(),
     new AdVariantService(),
-    new AdTokenService(testConfig),
     eventEmitter,
   );
 
@@ -156,7 +136,6 @@ describe('AdDecisionService', () => {
       campaign_id: null,
       variant: null,
       creative: null,
-      tracking_token: null,
     });
     expect(eventEmitter.emit).not.toHaveBeenCalled();
   });

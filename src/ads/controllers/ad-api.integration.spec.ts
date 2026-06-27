@@ -3,13 +3,10 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { APP_CONFIG, type AppConfig } from '../../config/app-config';
 import { AdCandidateService } from '../services/ad-candidate.service';
-import { AdClickService } from '../services/ad-click.service';
 import { AdDecisionService } from '../services/ad-decision.service';
 import { AdEventEmitter } from '../services/ad-event-emitter.service';
 import { AdTargetingService } from '../services/ad-targeting.service';
-import { AdTokenService } from '../services/ad-token.service';
 import { AdVariantService } from '../services/ad-variant.service';
-import { AdClickController } from './ad-click.controller';
 import { AdDecisionController } from './ad-decision.controller';
 import type { CandidateCampaign } from '../types/ad-decision.types';
 
@@ -27,7 +24,6 @@ const testConfig: AppConfig = {
   redis: {
     url: 'redis://127.0.0.1:6379',
   },
-  hmacSecret: 'test-secret',
 };
 
 function campaign(
@@ -111,13 +107,11 @@ describe('Ad API integration', () => {
     };
 
     const moduleRef = await Test.createTestingModule({
-      controllers: [AdDecisionController, AdClickController],
+      controllers: [AdDecisionController],
       providers: [
         AdDecisionService,
-        AdClickService,
         AdTargetingService,
         AdVariantService,
-        AdTokenService,
         {
           provide: APP_CONFIG,
           useValue: testConfig,
@@ -170,7 +164,6 @@ describe('Ad API integration', () => {
       campaign_id: null,
       variant: null,
       creative: null,
-      tracking_token: null,
     });
     expect(response.body.decisions[2]).toEqual({
       slot_id: 'main_side_right',
@@ -178,34 +171,15 @@ describe('Ad API integration', () => {
       campaign_id: null,
       variant: null,
       creative: null,
-      tracking_token: null,
     });
+    expect(response.body.decisions[0]).not.toHaveProperty('tracking_token');
     expect(eventEmitter.emit).toHaveBeenCalledTimes(1);
-
-    eventEmitter.emit.mockClear();
-
-    await request(app.getHttpServer())
-      .post('/v1/ad-click')
-      .send({
-        tracking_token: response.body.decisions[0].tracking_token,
-      })
-      .expect(200)
-      .expect({ ok: true });
-
-    expect(eventEmitter.emit).toHaveBeenCalledWith(
-      expect.objectContaining({
-        event_type: 'ad_click',
-        campaign_id: 'camp_fresh_01',
-      }),
-    );
   });
 
-  it('rejects tampered click tokens', async () => {
+  it('does not register the removed click tracking endpoint', async () => {
     await request(app.getHttpServer())
       .post('/v1/ad-click')
-      .send({
-        tracking_token: 'bad.token',
-      })
-      .expect(401);
+      .send({})
+      .expect(404);
   });
 });

@@ -13,9 +13,9 @@ The MVP focuses on:
 - Selecting campaigns through rule-based targeting.
 - Selecting A/B creatives through deterministic hashing.
 - Caching slot-level candidate campaigns in Redis.
-- Emitting impression and click events through an interface.
+- Emitting impression events through an interface.
 
-This project does not implement a full ad platform, bidding system, recommendation engine, analytics pipeline, or real-time campaign projector in the MVP.
+This project does not implement a full ad platform, bidding system, recommendation engine, analytics pipeline, click tracking, or real-time campaign projector in the MVP.
 
 ---
 
@@ -136,10 +136,6 @@ Data env used by this repository:
 
 For Redis in deployed environments, connect to `LOOPAD_REDIS_URL` as the provided endpoint. Do not silently fall back to local Redis or another address.
 
-App-specific secret env:
-
-- `HMAC_SECRET` — secret used to sign tracking tokens. This is required until the infra contract defines a `LOOPAD_*` replacement name.
-
 Legacy local names such as `DATABASE_HOST`, `DATABASE_PORT`, `DATABASE_USER`, `DATABASE_PASSWORD`, `DATABASE_NAME`, `REDIS_URL`, and `PROJECT_ID` should not be used for new runtime code. When touching config code, migrate toward the `LOOPAD_*` contract.
 
 Schema tools may continue to use standard libpq variables:
@@ -245,8 +241,7 @@ Use:
   "creative_id": null,
   "campaign_id": null,
   "variant": null,
-  "creative": null,
-  "tracking_token": null
+  "creative": null
 }
 ```
 
@@ -294,8 +289,7 @@ Response shape:
         "image_url": "https://placehold.co/800x400?text=fresh-B",
         "target_url": "/category/fresh_food",
         "headline": "오늘의 신선특가 ✨"
-      },
-      "tracking_token": "..."
+      }
     }
   ]
 }
@@ -309,54 +303,9 @@ Rules:
 - Do not make one HTTP request per slot.
 - Use Redis MGET for multi-slot candidate lookup when possible.
 
-### Ad Click API
+### Click Tracking
 
-The click endpoint is:
-
-```txt
-POST /v1/ad-click
-```
-
-The click endpoint receives a tracking token, verifies it, restores the campaign/creative/variant/slot information, and emits an `ad_click` event.
-
-The server that issued the tracking token is responsible for decoding and verifying it.
-
----
-
-## Tracking Token Rules
-
-Use an HMAC-SHA256 signed self-contained token in the MVP.
-
-Format:
-
-```txt
-base64url(payload).base64url(signature)
-```
-
-The payload may include:
-
-```json
-{
-  "project_id": "loopad-demo-shop",
-  "slot_id": "main_hero",
-  "campaign_id": "camp_fresh_01",
-  "creative_id": "cr_fresh_B",
-  "variant": "B",
-  "user_id": "user_123",
-  "session_id": "session_456",
-  "issued_at": 1710000000
-}
-```
-
-Rules:
-
-- The token is signed, not encrypted.
-- `user_id` and `session_id` are anonymous identifiers and may be included in the payload.
-- Do not put PII or secrets in the payload.
-- The token-signing service reads the HMAC secret from the `HMAC_SECRET` environment variable. Do not hardcode the secret in source.
-- Verify the signature before trusting the payload.
-- The MVP does not store issued tokens server-side.
-- Future versions may replace this with opaque reference tokens.
+This server does not provide click tracking. Do not add `POST /v1/ad-click`, signed tracking tokens, or token-signing secrets to this repository unless the service ownership changes explicitly.
 
 ---
 
@@ -400,13 +349,11 @@ src/
     ads.module.ts
     controllers/
       ad-decision.controller.ts
-      ad-click.controller.ts
     services/
       ad-decision.service.ts
       ad-candidate.service.ts
       ad-targeting.service.ts
       ad-variant.service.ts
-      ad-token.service.ts
       ad-event-emitter.service.ts
     repositories/
       campaign.repository.ts
@@ -415,7 +362,6 @@ src/
     dto/
       ad-decision-request.dto.ts
       ad-decision-response.dto.ts
-      ad-click-request.dto.ts
     constants/
       ad-slots.constant.ts
       ad-categories.constant.ts
@@ -462,7 +408,6 @@ LOOPAD_AURORA_DATABASE=loopad_ad_decision
 LOOPAD_AURORA_USERNAME=loopad
 LOOPAD_AURORA_PASSWORD=loopad
 LOOPAD_REDIS_URL=redis://127.0.0.1:6379
-HMAC_SECRET=replace-me-with-a-local-secret
 ```
 
 Schema tool env may still use standard libpq names:

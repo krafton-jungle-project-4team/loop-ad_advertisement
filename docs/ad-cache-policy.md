@@ -24,7 +24,7 @@ Redis stores the candidate campaigns for each slot.
 The application server performs:
 
 ```txt
-target filtering → priority selection → A/B variant selection → tracking token generation
+target filtering → priority selection → A/B variant selection
 ```
 
 This keeps the cache reusable across users while still allowing personalized decisions per request.
@@ -145,7 +145,6 @@ Redis hit
 → target filtering
 → priority selection
 → deterministic variant selection
-→ tracking token generation
 → decision response
 ```
 
@@ -311,8 +310,7 @@ Example:
   "creative_id": null,
   "campaign_id": null,
   "variant": null,
-  "creative": null,
-  "tracking_token": null
+  "creative": null
 }
 ```
 
@@ -332,7 +330,6 @@ Rules:
 - Avoid storing database entity objects directly.
 - Store only fields needed by the decision flow.
 - Do not store secrets.
-- Do not store tracking tokens.
 - Do not store user-specific decisions.
 - Version the payload if the shape becomes unstable later.
 
@@ -382,10 +379,7 @@ Log at least:
 - selected creative_id
 - selected variant
 - null decision reason
-- token verification failure
 - Redis fallback usage
-
-Avoid logging full tracking tokens in production logs.
 
 ---
 

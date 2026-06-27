@@ -2,7 +2,6 @@ import { Injectable, Logger } from '@nestjs/common';
 import { AdCandidateService } from './ad-candidate.service';
 import { AdEventEmitter } from './ad-event-emitter.service';
 import { AdTargetingService } from './ad-targeting.service';
-import { AdTokenService } from './ad-token.service';
 import { AdVariantService } from './ad-variant.service';
 import type {
   AdDecision,
@@ -11,7 +10,6 @@ import type {
   CandidateCampaign,
   Creative,
   NullDecision,
-  TrackingTokenPayload,
 } from '../types/ad-decision.types';
 import type { MainPageAdSlot } from '../constants/ad-slots.constant';
 
@@ -23,7 +21,6 @@ export class AdDecisionService {
     private readonly adCandidateService: AdCandidateService,
     private readonly adTargetingService: AdTargetingService,
     private readonly adVariantService: AdVariantService,
-    private readonly adTokenService: AdTokenService,
     private readonly adEventEmitter: AdEventEmitter,
   ) {}
 
@@ -86,24 +83,12 @@ export class AdDecisionService {
       return this.nullDecision(slot);
     }
 
-    const tokenPayload: TrackingTokenPayload = {
-      project_id: request.project_id,
-      slot_id: slot,
-      campaign_id: campaign.campaign_id,
-      creative_id: creative.creative_id,
-      variant,
-      user_id: request.user_id,
-      session_id: request.session_id,
-      issued_at: Math.floor(Date.now() / 1000),
-    };
-
     return {
       slot_id: slot,
       creative_id: creative.creative_id,
       campaign_id: campaign.campaign_id,
       variant,
       creative: this.responseCreative(creative),
-      tracking_token: this.adTokenService.sign(tokenPayload),
     };
   }
 
@@ -164,7 +149,6 @@ export class AdDecisionService {
       campaign_id: null,
       variant: null,
       creative: null,
-      tracking_token: null,
     };
   }
 }

@@ -10,7 +10,6 @@ const validEnv = {
   LOOPAD_AURORA_USERNAME: 'loopad',
   LOOPAD_AURORA_PASSWORD: 'loopad',
   LOOPAD_REDIS_URL: 'redis://127.0.0.1:6379',
-  HMAC_SECRET: 'test-secret',
 };
 
 describe('loadAppConfig', () => {
