@@ -1,5 +1,6 @@
-import { readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
@@ -46,7 +47,7 @@ function runDocker(args, input) {
     cwd: repoRoot,
     input,
     stdio: ['pipe', 'inherit', 'inherit'],
-    env: process.env,
+    env: dockerProcessEnv(),
   });
 
   if (result.error) {
@@ -56,54 +57,85 @@ function runDocker(args, input) {
   return result.status ?? 1;
 }
 
+function dockerProcessEnv() {
+  const env = { ...process.env };
+  delete env.PGPASSWORD;
+
+  return env;
+}
+
+function withDockerEnvFile(db, callback) {
+  const tempDir = mkdtempSync(join(tmpdir(), 'loopad-schema-env-'));
+  const envFile = join(tempDir, 'db.env');
+
+  try {
+    writeFileSync(
+      envFile,
+      [
+        `PGPASSWORD=${db.password}`,
+        `PGSSLMODE=${db.sslmode}`,
+        '',
+      ].join('\n'),
+      { mode: 0o600 },
+    );
+
+    return callback(envFile);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
 export function runSqldef(db = connection(), flags = []) {
   const schema = readFileSync(schemaFile, 'utf8');
-  const args = [
-    'run',
-    '--rm',
-    '-i',
-    '--add-host',
-    dockerHostAlias,
-    'sqldef/psqldef',
-    '--host',
-    db.host,
-    '--port',
-    db.port,
-    '--user',
-    db.user,
-    '--password',
-    db.password,
-    ...flags,
-    db.database,
-  ];
 
-  return runDocker(args, schema);
+  return withDockerEnvFile(db, (envFile) => {
+    const args = [
+      'run',
+      '--rm',
+      '-i',
+      '--env-file',
+      envFile,
+      '--add-host',
+      dockerHostAlias,
+      'sqldef/psqldef',
+      '--host',
+      db.host,
+      '--port',
+      db.port,
+      '--user',
+      db.user,
+      ...flags,
+      db.database,
+    ];
+
+    return runDocker(args, schema);
+  });
 }
 
 export function runPsql(db = connection(), sql) {
-  const args = [
-    'run',
-    '--rm',
-    '-i',
-    '--add-host',
-    dockerHostAlias,
-    '-e',
-    `PGPASSWORD=${db.password}`,
-    '-e',
-    `PGSSLMODE=${db.sslmode}`,
-    'postgres:16-alpine',
-    'psql',
-    '--set',
-    'ON_ERROR_STOP=1',
-    '--host',
-    db.host,
-    '--port',
-    db.port,
-    '--username',
-    db.user,
-    '--dbname',
-    db.database,
-  ];
+  return withDockerEnvFile(db, (envFile) => {
+    const args = [
+      'run',
+      '--rm',
+      '-i',
+      '--env-file',
+      envFile,
+      '--add-host',
+      dockerHostAlias,
+      'postgres:16-alpine',
+      'psql',
+      '--set',
+      'ON_ERROR_STOP=1',
+      '--host',
+      db.host,
+      '--port',
+      db.port,
+      '--username',
+      db.user,
+      '--dbname',
+      db.database,
+    ];
 
-  return runDocker(args, sql);
+    return runDocker(args, sql);
+  });
 }

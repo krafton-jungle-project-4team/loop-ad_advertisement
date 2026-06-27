@@ -22,14 +22,12 @@ The MVP includes:
 
 - Main page ad decision API.
 - Three main page ad slots.
-- Campaign, creative, and placement data model.
+- Common schema based candidate read model.
 - Rule-based target filtering.
 - Priority-based campaign selection.
 - Deterministic A/B creative selection.
 - Redis candidate cache.
-- Tracking token generation.
-- Click endpoint for restoring tracking token data.
-- Impression and click event emit interface.
+- Impression event emit interface.
 
 ### Excluded
 
@@ -43,6 +41,7 @@ The MVP excludes:
 - Same-priority campaign competition.
 - Kafka/Kinesis integration implementation.
 - Analytics consumer implementation.
+- Click tracking.
 - Projector-based Redis cache updates.
 - Admin UI for campaign management.
 
@@ -64,10 +63,10 @@ The MVP intentionally focuses on the main page because supporting main, detail, 
 
 ## 4. Data Model
 
-The ad model is divided into three layers.
+The runtime ad model is still exposed to the decision service as three layers.
 
 ```txt
-Campaign / Creative / Placement
+Candidate mapping / Campaign / Creative
 ```
 
 ### Campaign
@@ -83,18 +82,14 @@ Example campaigns:
 - Digital appliance event
 - Fashion promotion
 
-Campaign fields:
+Campaign fields after mapping:
 
 ```ts
 campaign_id
 name
 priority
 status
-target_category
-target_age_groups
-target_gender
-starts_at
-ends_at
+target
 ```
 
 ### Creative
@@ -103,7 +98,7 @@ Creative is the actual material rendered on the screen.
 
 Each campaign can have A/B creatives.
 
-Creative fields:
+Creative fields after mapping:
 
 ```ts
 creative_id
@@ -114,66 +109,58 @@ image_url
 target_url
 ```
 
-### Placement
+### Candidate Mapping
 
-Placement defines where a campaign can be shown.
+Candidate mapping defines where and for which target a campaign can be shown.
 
-Placement fields:
+Mapping fields after conversion:
 
 ```ts
 campaign_id
 slot_id
 weight
+priority
+target
 ```
 
-In the MVP, `weight` exists in the data model but is not used for campaign selection.
+In this phase, `weight` exists in the data model but is not used for campaign selection.
 
 ### Database Schema (Postgres)
 
-`database/schema.sql` is the sqldef target schema for the MVP. This file is the declarative target applied by sqldef, not an incremental migration.
+`database/schema.sql` is the sqldef target schema for local advertisement-server development. It contains the common tables this service directly reads:
 
-```sql
-CREATE TABLE campaign (
-  campaign_id text PRIMARY KEY,
-  name text NOT NULL,
-  priority integer NOT NULL,
-  status VARCHAR(20) NOT NULL,
-  target_category text,
-  target_age_groups text[],
-  target_gender text,
-  starts_at timestamptz,
-  ends_at timestamptz,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  CONSTRAINT chk_campaign_status CHECK (status = ANY (ARRAY['active', 'ended', 'paused']))
-);
-
-CREATE TABLE creative (
-  creative_id text PRIMARY KEY,
-  campaign_id text NOT NULL REFERENCES campaign (campaign_id),
-  variant VARCHAR(1) NOT NULL,
-  headline text NOT NULL,
-  image_url text NOT NULL,
-  target_url text NOT NULL,
-  CONSTRAINT chk_creative_variant CHECK (variant IN ('A', 'B'))
-);
-
-CREATE TABLE placement (
-  campaign_id text NOT NULL REFERENCES campaign (campaign_id),
-  slot_id text NOT NULL,
-  weight integer NOT NULL DEFAULT 100,
-  PRIMARY KEY (campaign_id, slot_id)
-);
-
-CREATE INDEX idx_placement_slot_id ON placement (slot_id);
-CREATE INDEX idx_creative_campaign_id ON creative (campaign_id);
+```txt
+projects
+campaigns
+coupons
+ad_creatives
+recommendation_results
+experiments
+segment_ad_mappings
 ```
 
-`target_age_groups` is a `text[]` array so one campaign can match multiple age groups. `target_gender` is nullable, but when it is set, MVP targeting reads it as an exact-match condition.
+The repository reads `segment_ad_mappings + campaigns + ad_creatives`, then the mapper converts common rows into the internal `CandidateCampaign` shape.
 
-Business identifiers such as `campaign_id` and `creative_id` remain `text` primary keys because meaningful IDs like `camp_fresh_01` and `cr_fresh_A` are used in seed data, cache keys, and tracking tokens. They are not auto-increment IDs shared or joined with other services' tables.
+ID mapping:
 
-Indexes follow the `idx_{table}_{column}` naming pattern.
+```txt
+campaigns.id                   -> DB join key
+campaigns.external_campaign_id -> API/token/hash campaign_id
+ad_creatives.id                -> DB join key
+ad_creatives.external_creative_id -> API/token creative_id
+```
+
+`ad_creatives.external_creative_id` is nullable for migration compatibility in the current schema, but application mapping treats it as required. After existing rows are backfilled, promote it to `NOT NULL` with `UNIQUE(project_id, external_creative_id)`.
+
+Candidate mapping:
+
+```txt
+execution_hint_json.slot_id  -> placement.slot_id
+execution_hint_json.priority -> candidate.priority
+execution_hint_json.weight   -> placement.weight
+segment_json                 -> target
+payload_json.variant         -> creative.variant
+```
 
 ---
 
@@ -189,7 +176,7 @@ Placement → Campaign → Creative
 
 The server receives requested slots.
 
-For each slot, it loads candidate campaigns that are allowed to appear in that slot.
+For each slot, it loads candidate campaigns whose placement read model is represented by `segment_ad_mappings.execution_hint_json.slot_id`.
 
 Example:
 
@@ -207,7 +194,7 @@ Target rules:
 - Empty target fields are skipped.
 - Category is the primary condition.
 - Age and gender are optional supporting conditions.
-- If a campaign has `target_gender`, `context.gender` must exactly match it.
+- If a candidate target has `gender`, `context.gender` must exactly match it.
 - If `context.gender` is missing or null, gender-targeted campaigns do not match.
 - Fully empty targets are not allowed for personalized campaigns.
 
@@ -285,7 +272,7 @@ POST /v1/ad-decision
 - `user_id` may be an anonymous ID when the user is not logged in.
 - `context.category` is used as the primary targeting signal in the MVP.
 - `context.age_group` and `context.gender` are optional supporting request signals.
-- If a candidate campaign has `target_gender`, a missing or null `context.gender` does not match it.
+- If a candidate target has `gender`, a missing or null `context.gender` does not match it.
 
 ### Response
 
@@ -301,16 +288,14 @@ POST /v1/ad-decision
         "image_url": "https://placehold.co/800x400?text=fresh-B",
         "target_url": "/category/fresh_food",
         "headline": "오늘의 신선특가 ✨"
-      },
-      "tracking_token": "base64url(payload).base64url(signature)"
+      }
     },
     {
       "slot_id": "main_side_left",
       "creative_id": null,
       "campaign_id": null,
       "variant": null,
-      "creative": null,
-      "tracking_token": null
+      "creative": null
     }
   ]
 }
@@ -321,53 +306,25 @@ POST /v1/ad-decision
 - The response contains one decision per requested slot.
 - If no candidate matches, return a null decision.
 - The server must not force a fallback ad unless explicitly required.
-- Each non-null decision must include a tracking token.
 
 ---
 
-## 7. Tracking Token
+## 7. Click Tracking Boundary
 
-The tracking token connects ad decision, impression, and click events.
-
-The MVP uses an HMAC-SHA256 signed self-contained token.
-
-Tracking-token signing and A/B variant hashing are independent. Tracking tokens use HMAC-SHA256 for integrity, while A/B selection uses MurmurHash3 x86 32-bit with seed `0`.
-
-Format:
-
-```txt
-base64url(payload).base64url(signature)
-```
-
-Payload example:
-
-```json
-{
-  "project_id": "loopad-demo-shop",
-  "slot_id": "main_hero",
-  "campaign_id": "camp_fresh_01",
-  "creative_id": "cr_fresh_B",
-  "variant": "B",
-  "user_id": "user_123",
-  "session_id": "session_456",
-  "issued_at": 1710000000
-}
-```
+This server does not provide click tracking.
 
 Rules:
 
-- The token is signed, not encrypted.
-- `user_id` and `session_id` are anonymous identifiers and may be included in the payload.
-- The payload must not contain PII or secrets.
-- The server verifies the signature before trusting the token.
-- The MVP does not persist issued tokens.
-- Future versions may move to opaque reference tokens.
+- Do not issue signed tracking tokens from the ad decision API.
+- Do not expose `POST /v1/ad-click`.
+- Do not add token-signing secrets to this service.
+- Click tracking, if needed, is owned by another service.
 
 ---
 
 ## 8. Event Emit Interface
 
-The ad server defines an event emit interface for impressions and clicks.
+The ad server defines an event emit interface for impressions.
 
 MVP behavior:
 
@@ -399,36 +356,11 @@ Example:
 }
 ```
 
-### Click Event
-
-The click endpoint decodes and verifies the tracking token, then emits an ad click event.
-
-Endpoint:
-
-```http
-POST /v1/ad-click
-```
-
-Example event:
-
-```json
-{
-  "event_type": "ad_click",
-  "project_id": "loopad-demo-shop",
-  "slot_id": "main_hero",
-  "campaign_id": "camp_fresh_01",
-  "creative_id": "cr_fresh_B",
-  "variant": "B",
-  "user_id": "user_123",
-  "session_id": "session_456"
-}
-```
-
----
-
 ## 9. Demo Seed Data
 
-### Campaigns
+### Placements
+
+`campaign_id` is read from `campaigns.external_campaign_id`. Slot, priority, weight, and target data are read from `segment_ad_mappings` JSON fields as the placement read model.
 
 | campaign_id | name | slot | priority | status | target |
 |---|---|---:|---:|---|---|
@@ -436,15 +368,6 @@ Example event:
 | camp_pet_01 | 반려동물 용품 프로모션 | main_hero | 8 | active | category=pet / age=20s,30s |
 | camp_digital_01 | 디지털/가전 기획전 | main_side_left | 5 | active | category=digital |
 | camp_fashion_01 | 패션 기획전 | main_side_right | 5 | active | category=fashion / age=20s,30s / gender=female |
-
-### Placements
-
-| campaign_id | slot_id | weight |
-|---|---|---:|
-| camp_fresh_01 | main_hero | 100 |
-| camp_pet_01 | main_hero | 100 |
-| camp_digital_01 | main_side_left | 100 |
-| camp_fashion_01 | main_side_right | 100 |
 
 ### Creatives
 
@@ -528,4 +451,3 @@ After the MVP, the server may be extended with:
 - Impression deduplication.
 - Real analytics pipeline integration.
 - Recommendation server integration.
-- Opaque tracking tokens.

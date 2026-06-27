@@ -19,7 +19,6 @@ export interface AppConfig {
   redis: {
     url: string;
   };
-  hmacSecret: string;
 }
 
 export function loadAppConfig(env: Env = process.env): AppConfig {
@@ -47,7 +46,6 @@ export function loadAppConfig(env: Env = process.env): AppConfig {
     redis: Object.freeze({
       url: redisUrl,
     }),
-    hmacSecret: requiredEnv(env, 'HMAC_SECRET'),
   });
 }
 

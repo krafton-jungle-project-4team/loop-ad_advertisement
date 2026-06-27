@@ -24,7 +24,7 @@ Redis stores the candidate campaigns for each slot.
 The application server performs:
 
 ```txt
-target filtering → priority selection → A/B variant selection → tracking token generation
+target filtering → priority selection → A/B variant selection
 ```
 
 This keeps the cache reusable across users while still allowing personalized decisions per request.
@@ -80,6 +80,7 @@ Example:
     "creatives": [
       {
         "creative_id": "cr_fresh_A",
+        "campaign_id": "camp_fresh_01",
         "variant": "A",
         "headline": "신선한 닭가슴살 30% 할인",
         "image_url": "https://placehold.co/800x400?text=fresh-A",
@@ -87,6 +88,7 @@ Example:
       },
       {
         "creative_id": "cr_fresh_B",
+        "campaign_id": "camp_fresh_01",
         "variant": "B",
         "headline": "오늘의 신선특가 ✨",
         "image_url": "https://placehold.co/800x400?text=fresh-B",
@@ -103,7 +105,7 @@ Example:
 - Each campaign candidate includes its placement data.
 - Each campaign candidate includes its target conditions.
 - Cache JSON uses short target keys: `category`, `age_groups`, and `gender`.
-- Database columns use `target_category`, `target_age_groups`, and `target_gender`; the repository maps between the DB column names and cache JSON keys.
+- Common DB rows use `segment_ad_mappings.segment_json`; the mapper converts it into cache JSON keys.
 - Each campaign candidate includes both A and B creatives.
 - Including both creatives avoids another Redis lookup after variant hashing.
 - The value must be enough to complete the decision in memory.
@@ -143,7 +145,6 @@ Redis hit
 → target filtering
 → priority selection
 → deterministic variant selection
-→ tracking token generation
 → decision response
 ```
 
@@ -309,8 +310,7 @@ Example:
   "creative_id": null,
   "campaign_id": null,
   "variant": null,
-  "creative": null,
-  "tracking_token": null
+  "creative": null
 }
 ```
 
@@ -330,7 +330,6 @@ Rules:
 - Avoid storing database entity objects directly.
 - Store only fields needed by the decision flow.
 - Do not store secrets.
-- Do not store tracking tokens.
 - Do not store user-specific decisions.
 - Version the payload if the shape becomes unstable later.
 
@@ -380,10 +379,7 @@ Log at least:
 - selected creative_id
 - selected variant
 - null decision reason
-- token verification failure
 - Redis fallback usage
-
-Avoid logging full tracking tokens in production logs.
 
 ---
 

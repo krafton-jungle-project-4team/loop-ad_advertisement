@@ -1,31 +1,13 @@
-import type { AppConfig } from '../../config/app-config';
+import { Logger } from '@nestjs/common';
 import { AdCandidateService } from './ad-candidate.service';
 import { AdDecisionService } from './ad-decision.service';
 import { AdEventEmitter } from './ad-event-emitter.service';
 import { AdTargetingService } from './ad-targeting.service';
-import { AdTokenService } from './ad-token.service';
 import { AdVariantService } from './ad-variant.service';
 import type {
   AdDecisionRequest,
   CandidateCampaign,
 } from '../types/ad-decision.types';
-
-const testConfig: AppConfig = {
-  env: 'test',
-  serviceId: 'advertisement-api',
-  port: 8080,
-  postgres: {
-    host: '127.0.0.1',
-    port: 55432,
-    database: 'loopad_ad_decision',
-    username: 'loopad',
-    password: 'loopad',
-  },
-  redis: {
-    url: 'redis://127.0.0.1:6379',
-  },
-  hmacSecret: 'test-secret',
-};
 
 function creative(campaignId: string, variant: 'A' | 'B') {
   return {
@@ -120,7 +102,6 @@ function createService(candidates = seedCandidates) {
     candidateService,
     new AdTargetingService(),
     new AdVariantService(),
-    new AdTokenService(testConfig),
     eventEmitter,
   );
 
@@ -155,7 +136,6 @@ describe('AdDecisionService', () => {
       campaign_id: null,
       variant: null,
       creative: null,
-      tracking_token: null,
     });
     expect(eventEmitter.emit).not.toHaveBeenCalled();
   });
@@ -198,7 +178,7 @@ describe('AdDecisionService', () => {
     });
   });
 
-  it('uses priority and campaign_id as deterministic tiebreakers', async () => {
+  it('logs same-priority conflicts while keeping deterministic tiebreakers', async () => {
     const candidates = new Map([
       [
         'main_hero',
@@ -217,12 +197,31 @@ describe('AdDecisionService', () => {
       ],
     ]) as Map<CandidateCampaign['placement']['slot_id'], CandidateCampaign[]>;
     const { service } = createService(candidates);
+    const errorSpy = jest
+      .spyOn(Logger.prototype, 'error')
+      .mockImplementation(() => undefined);
 
-    const response = await service.decide(
-      request('main_hero', { category: 'pet' }),
-    );
+    try {
+      const response = await service.decide(
+        request('main_hero', { category: 'pet' }),
+      );
 
-    expect(response.decisions[0].campaign_id).toBe('camp_alpha');
+      expect(response.decisions[0].campaign_id).toBe('camp_alpha');
+      expect(errorSpy).toHaveBeenCalledTimes(1);
+
+      const logPayload = JSON.parse(String(errorSpy.mock.calls[0][0]));
+      expect(logPayload).toMatchObject({
+        level: 'error',
+        message: 'same-slot same-priority matched campaigns',
+        slot_id: 'main_hero',
+        priority: 10,
+        campaign_ids: ['camp_alpha', 'camp_beta'],
+      });
+      expect(logPayload).not.toHaveProperty('user_id');
+      expect(logPayload).not.toHaveProperty('session_id');
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 
   it('emits one impression per non-null decision', async () => {

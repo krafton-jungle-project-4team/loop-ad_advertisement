@@ -1,8 +1,7 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { AdCandidateService } from './ad-candidate.service';
 import { AdEventEmitter } from './ad-event-emitter.service';
 import { AdTargetingService } from './ad-targeting.service';
-import { AdTokenService } from './ad-token.service';
 import { AdVariantService } from './ad-variant.service';
 import type {
   AdDecision,
@@ -11,17 +10,17 @@ import type {
   CandidateCampaign,
   Creative,
   NullDecision,
-  TrackingTokenPayload,
 } from '../types/ad-decision.types';
 import type { MainPageAdSlot } from '../constants/ad-slots.constant';
 
 @Injectable()
 export class AdDecisionService {
+  private readonly logger = new Logger(AdDecisionService.name);
+
   constructor(
     private readonly adCandidateService: AdCandidateService,
     private readonly adTargetingService: AdTargetingService,
     private readonly adVariantService: AdVariantService,
-    private readonly adTokenService: AdTokenService,
     private readonly adEventEmitter: AdEventEmitter,
   ) {}
 
@@ -60,9 +59,13 @@ export class AdDecisionService {
     candidates: CandidateCampaign[],
     request: AdDecisionRequest,
   ): AdDecision {
-    const campaign = this.selectCampaign(
-      this.adTargetingService.filter(candidates, request.context),
+    const matchedCandidates = this.adTargetingService.filter(
+      candidates,
+      request.context,
     );
+    this.logPriorityConflicts(slot, matchedCandidates);
+
+    const campaign = this.selectCampaign(matchedCandidates);
 
     if (!campaign) {
       return this.nullDecision(slot);
@@ -80,24 +83,12 @@ export class AdDecisionService {
       return this.nullDecision(slot);
     }
 
-    const tokenPayload: TrackingTokenPayload = {
-      project_id: request.project_id,
-      slot_id: slot,
-      campaign_id: campaign.campaign_id,
-      creative_id: creative.creative_id,
-      variant,
-      user_id: request.user_id,
-      session_id: request.session_id,
-      issued_at: Math.floor(Date.now() / 1000),
-    };
-
     return {
       slot_id: slot,
       creative_id: creative.creative_id,
       campaign_id: campaign.campaign_id,
       variant,
       creative: this.responseCreative(creative),
-      tracking_token: this.adTokenService.sign(tokenPayload),
     };
   }
 
@@ -111,6 +102,36 @@ export class AdDecisionService {
 
       return left.campaign_id.localeCompare(right.campaign_id);
     })[0] ?? null;
+  }
+
+  private logPriorityConflicts(
+    slot: MainPageAdSlot,
+    candidates: CandidateCampaign[],
+  ): void {
+    const campaignIdsByPriority = new Map<number, string[]>();
+
+    for (const candidate of candidates) {
+      const campaignIds = campaignIdsByPriority.get(candidate.priority) ?? [];
+      campaignIds.push(candidate.campaign_id);
+      campaignIdsByPriority.set(candidate.priority, campaignIds);
+    }
+
+    for (const [priority, campaignIds] of campaignIdsByPriority.entries()) {
+      if (campaignIds.length < 2) {
+        continue;
+      }
+
+      this.logger.error(
+        JSON.stringify({
+          timestamp: new Date().toISOString(),
+          level: 'error',
+          message: 'same-slot same-priority matched campaigns',
+          slot_id: slot,
+          priority,
+          campaign_ids: campaignIds.sort(),
+        }),
+      );
+    }
   }
 
   private responseCreative(creative: Creative) {
@@ -128,7 +149,6 @@ export class AdDecisionService {
       campaign_id: null,
       variant: null,
       creative: null,
-      tracking_token: null,
     };
   }
 }

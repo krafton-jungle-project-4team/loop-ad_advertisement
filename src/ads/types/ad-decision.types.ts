@@ -62,7 +62,6 @@ export interface NonNullDecision {
     target_url: string;
     headline: string;
   };
-  tracking_token: string;
 }
 
 export interface NullDecision {
@@ -71,7 +70,6 @@ export interface NullDecision {
   campaign_id: null;
   variant: null;
   creative: null;
-  tracking_token: null;
 }
 
 export type AdDecision = NonNullDecision | NullDecision;
@@ -80,19 +78,8 @@ export interface AdDecisionResponse {
   decisions: AdDecision[];
 }
 
-export interface TrackingTokenPayload {
-  project_id: string;
-  slot_id: MainPageAdSlot;
-  campaign_id: string;
-  creative_id: string;
-  variant: AdVariant;
-  user_id: string;
-  session_id: string;
-  issued_at: number;
-}
-
 export interface AdEvent {
-  event_type: 'ad_impression' | 'ad_click';
+  event_type: 'ad_impression';
   project_id: string;
   slot_id: MainPageAdSlot;
   campaign_id: string;
