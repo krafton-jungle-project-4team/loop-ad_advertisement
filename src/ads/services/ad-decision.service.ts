@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { AdCandidateService } from './ad-candidate.service';
 import { AdEventEmitter } from './ad-event-emitter.service';
 import { AdTargetingService } from './ad-targeting.service';
@@ -17,6 +17,8 @@ import type { MainPageAdSlot } from '../constants/ad-slots.constant';
 
 @Injectable()
 export class AdDecisionService {
+  private readonly logger = new Logger(AdDecisionService.name);
+
   constructor(
     private readonly adCandidateService: AdCandidateService,
     private readonly adTargetingService: AdTargetingService,
@@ -60,9 +62,13 @@ export class AdDecisionService {
     candidates: CandidateCampaign[],
     request: AdDecisionRequest,
   ): AdDecision {
-    const campaign = this.selectCampaign(
-      this.adTargetingService.filter(candidates, request.context),
+    const matchedCandidates = this.adTargetingService.filter(
+      candidates,
+      request.context,
     );
+    this.logPriorityConflicts(slot, matchedCandidates);
+
+    const campaign = this.selectCampaign(matchedCandidates);
 
     if (!campaign) {
       return this.nullDecision(slot);
@@ -111,6 +117,36 @@ export class AdDecisionService {
 
       return left.campaign_id.localeCompare(right.campaign_id);
     })[0] ?? null;
+  }
+
+  private logPriorityConflicts(
+    slot: MainPageAdSlot,
+    candidates: CandidateCampaign[],
+  ): void {
+    const campaignIdsByPriority = new Map<number, string[]>();
+
+    for (const candidate of candidates) {
+      const campaignIds = campaignIdsByPriority.get(candidate.priority) ?? [];
+      campaignIds.push(candidate.campaign_id);
+      campaignIdsByPriority.set(candidate.priority, campaignIds);
+    }
+
+    for (const [priority, campaignIds] of campaignIdsByPriority.entries()) {
+      if (campaignIds.length < 2) {
+        continue;
+      }
+
+      this.logger.error(
+        JSON.stringify({
+          timestamp: new Date().toISOString(),
+          level: 'error',
+          message: 'same-slot same-priority matched campaigns',
+          slot_id: slot,
+          priority,
+          campaign_ids: campaignIds.sort(),
+        }),
+      );
+    }
   }
 
   private responseCreative(creative: Creative) {

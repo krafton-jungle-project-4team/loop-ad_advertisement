@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import type { AppConfig } from '../../config/app-config';
 import { AdCandidateService } from './ad-candidate.service';
 import { AdDecisionService } from './ad-decision.service';
@@ -198,7 +199,7 @@ describe('AdDecisionService', () => {
     });
   });
 
-  it('uses priority and campaign_id as deterministic tiebreakers', async () => {
+  it('logs same-priority conflicts while keeping deterministic tiebreakers', async () => {
     const candidates = new Map([
       [
         'main_hero',
@@ -217,12 +218,31 @@ describe('AdDecisionService', () => {
       ],
     ]) as Map<CandidateCampaign['placement']['slot_id'], CandidateCampaign[]>;
     const { service } = createService(candidates);
+    const errorSpy = jest
+      .spyOn(Logger.prototype, 'error')
+      .mockImplementation(() => undefined);
 
-    const response = await service.decide(
-      request('main_hero', { category: 'pet' }),
-    );
+    try {
+      const response = await service.decide(
+        request('main_hero', { category: 'pet' }),
+      );
 
-    expect(response.decisions[0].campaign_id).toBe('camp_alpha');
+      expect(response.decisions[0].campaign_id).toBe('camp_alpha');
+      expect(errorSpy).toHaveBeenCalledTimes(1);
+
+      const logPayload = JSON.parse(String(errorSpy.mock.calls[0][0]));
+      expect(logPayload).toMatchObject({
+        level: 'error',
+        message: 'same-slot same-priority matched campaigns',
+        slot_id: 'main_hero',
+        priority: 10,
+        campaign_ids: ['camp_alpha', 'camp_beta'],
+      });
+      expect(logPayload).not.toHaveProperty('user_id');
+      expect(logPayload).not.toHaveProperty('session_id');
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 
   it('emits one impression per non-null decision', async () => {
