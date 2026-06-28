@@ -44,10 +44,15 @@
 |---|---|---|
 | `GET` | `/health` | ECS/NLB health check. 정상일 때 `200`을 반환합니다. |
 | `POST` | `/ads/decision` | 한 요청에 대해 하나의 광고 content decision을 반환합니다. |
+| `POST` | `/api/ads/decision` | public ALB 광고 API 호환 경로입니다. |
+| `POST` | `/advertisements/decision` | public ALB 광고 API 호환 경로입니다. |
 
 ### `POST /ads/decision`
 
 요청 `Content-Type`은 `application/json`이어야 합니다.
+
+Public ALB 호환 경로인 `POST /api/ads/decision`과
+`POST /advertisements/decision`도 같은 요청/응답 계약을 사용합니다.
 
 Request:
 
