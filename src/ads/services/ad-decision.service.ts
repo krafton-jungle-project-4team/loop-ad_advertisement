@@ -1,4 +1,8 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
+import {
+  AppLoggerService,
+  errorMessage,
+} from '../../logging/app-logger.service';
 import { AdDecisionRepository } from '../repositories/ad-decision.repository';
 import { AdActionSelectorService } from './ad-action-selector.service';
 import { AdContentService } from './ad-content.service';
@@ -13,14 +17,13 @@ import type {
 
 @Injectable()
 export class AdDecisionService {
-  private readonly logger = new Logger(AdDecisionService.name);
-
   constructor(
     private readonly adSegmentService: AdSegmentService,
     private readonly adExperimentService: AdExperimentService,
     private readonly adActionSelectorService: AdActionSelectorService,
     private readonly adContentService: AdContentService,
     private readonly adDecisionRepository: AdDecisionRepository,
+    private readonly logger: AppLoggerService,
   ) {}
 
   async decide(request: AdDecisionRequest): Promise<AdDecisionResponse> {
@@ -117,17 +120,16 @@ export class AdDecisionService {
       });
     } catch (error) {
       this.logger.error(
-        JSON.stringify({
-          timestamp: new Date().toISOString(),
-          level: 'error',
-          message: 'ad decision insert failed',
+        AdDecisionService.name,
+        'ad decision insert failed',
+        {
           project_id: input.request.project_id,
           segment_id: input.segmentId,
           experiment_id: input.experiment.id,
           action_id: input.actionId,
           content_id: input.contentId,
-          error: (error as Error).message,
-        }),
+          error_message: errorMessage(error),
+        },
       );
 
       return '';

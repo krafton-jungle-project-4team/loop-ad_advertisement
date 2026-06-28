@@ -1,4 +1,4 @@
-import { Logger } from '@nestjs/common';
+import { AppLoggerService } from '../../logging/app-logger.service';
 import { AdDecisionRepository } from '../repositories/ad-decision.repository';
 import { AdActionSelectorService } from './ad-action-selector.service';
 import { AdContentService } from './ad-content.service';
@@ -100,6 +100,11 @@ function createService(overrides: {
       return Promise.resolve(overrides.decisionId ?? '101');
     }),
   } as unknown as AdDecisionRepository;
+  const logger = {
+    info: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn(),
+  } as unknown as jest.Mocked<AppLoggerService>;
 
   return {
     service: new AdDecisionService(
@@ -108,12 +113,14 @@ function createService(overrides: {
       adActionSelectorService,
       adContentService,
       adDecisionRepository,
+      logger,
     ),
     adSegmentService,
     adExperimentService,
     adActionSelectorService,
     adContentService,
     adDecisionRepository,
+    logger,
   };
 }
 
@@ -213,26 +220,30 @@ describe('AdDecisionService', () => {
   });
 
   it('still returns normal content with an empty decision_id when insert fails', async () => {
-    const errorSpy = jest
-      .spyOn(Logger.prototype, 'error')
-      .mockImplementation(() => undefined);
-    const { service } = createService({
+    const { service, logger } = createService({
       insertRejects: new Error('insert failed'),
     });
 
-    try {
-      const response = await service.decide(request);
+    const response = await service.decide(request);
 
-      expect(response).toMatchObject({
-        decision_id: '',
+    expect(response).toMatchObject({
+      decision_id: '',
+      content_id: 'content_discount',
+      content_url:
+        'https://s3.ap-northeast-2.amazonaws.com/loop-ad-demo/content_discount.png',
+    });
+    expect(logger.error).toHaveBeenCalledWith(
+      AdDecisionService.name,
+      'ad decision insert failed',
+      {
+        project_id: 'demo_project',
+        segment_id: 'seg_30m_mobile_fresh',
+        experiment_id: 'exp_001',
+        action_id: 'act_discount',
         content_id: 'content_discount',
-        content_url:
-          'https://s3.ap-northeast-2.amazonaws.com/loop-ad-demo/content_discount.png',
-      });
-      expect(errorSpy).toHaveBeenCalled();
-    } finally {
-      errorSpy.mockRestore();
-    }
+        error_message: 'insert failed',
+      },
+    );
   });
 
   it('persists a completed experiment winner when action selection succeeds', async () => {

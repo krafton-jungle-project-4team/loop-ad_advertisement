@@ -1,5 +1,6 @@
 import { AdCandidateMapper } from './ad-candidate.mapper';
 import { AdCandidateService } from './ad-candidate.service';
+import { AppLoggerService } from '../../logging/app-logger.service';
 import type { AdCacheService } from '../../redis/ad-cache.service';
 import type {
   AdCandidateRepository,
@@ -95,16 +96,23 @@ function createService(cacheResult: Map<string, CandidateCampaign[]> | Error) {
   const adCandidateMapper = {
     toCandidatesBySlot: jest.fn().mockReturnValue(loadedCandidates),
   } as unknown as AdCandidateMapper;
+  const logger = {
+    info: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn(),
+  } as unknown as jest.Mocked<AppLoggerService>;
 
   return {
     service: new AdCandidateService(
       adCacheService,
       adCandidateRepository,
       adCandidateMapper,
+      logger,
     ),
     adCacheService,
     adCandidateRepository,
     adCandidateMapper,
+    logger,
   };
 }
 

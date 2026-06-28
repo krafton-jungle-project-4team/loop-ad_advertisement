@@ -1,4 +1,4 @@
-import { Logger } from '@nestjs/common';
+import { AppLoggerService } from '../../logging/app-logger.service';
 import { ExperimentActionProbRepository } from '../repositories/experiment-action-prob.repository';
 import { GeneratedContentRepository } from '../repositories/generated-content.repository';
 import { AdActionSelectorService } from './ad-action-selector.service';
@@ -33,14 +33,21 @@ function createService(probabilities = [
       'act_bundle',
     ]),
   } as unknown as GeneratedContentRepository;
+  const logger = {
+    info: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn(),
+  } as unknown as jest.Mocked<AppLoggerService>;
 
   return {
     service: new AdActionSelectorService(
       experimentActionProbRepository,
       generatedContentRepository,
+      logger,
     ),
     experimentActionProbRepository,
     generatedContentRepository,
+    logger,
   };
 }
 
@@ -126,25 +133,26 @@ describe('AdActionSelectorService', () => {
   });
 
   it('returns null and logs when a completed experiment has no winner', async () => {
-    const errorSpy = jest
-      .spyOn(Logger.prototype, 'error')
-      .mockImplementation(() => undefined);
-    const { service } = createService();
+    const { service, logger } = createService();
 
-    try {
-      await expect(
-        service.selectAction(
-          {
-            ...runningExperiment,
-            status: 'completed',
-            winnerActionId: null,
-          },
-          0.01,
-        ),
-      ).resolves.toBeNull();
-      expect(errorSpy).toHaveBeenCalled();
-    } finally {
-      errorSpy.mockRestore();
-    }
+    await expect(
+      service.selectAction(
+        {
+          ...runningExperiment,
+          status: 'completed',
+          winnerActionId: null,
+        },
+        0.01,
+      ),
+    ).resolves.toBeNull();
+    expect(logger.error).toHaveBeenCalledWith(
+      AdActionSelectorService.name,
+      'completed experiment has no winner action',
+      {
+        project_id: 'demo_project',
+        experiment_id: 'exp_001',
+        segment_id: 'seg_30m_mobile_fresh',
+      },
+    );
   });
 });

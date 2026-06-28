@@ -1,4 +1,5 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
+import { AppLoggerService } from '../../logging/app-logger.service';
 import { ExperimentActionProbRepository } from '../repositories/experiment-action-prob.repository';
 import { GeneratedContentRepository } from '../repositories/generated-content.repository';
 import type {
@@ -9,11 +10,10 @@ import type {
 
 @Injectable()
 export class AdActionSelectorService {
-  private readonly logger = new Logger(AdActionSelectorService.name);
-
   constructor(
     private readonly experimentActionProbRepository: ExperimentActionProbRepository,
     private readonly generatedContentRepository: GeneratedContentRepository,
+    private readonly logger: AppLoggerService,
   ) {}
 
   async selectAction(
@@ -26,14 +26,13 @@ export class AdActionSelectorService {
       }
 
       this.logger.error(
-        JSON.stringify({
-          timestamp: new Date().toISOString(),
-          level: 'error',
-          message: 'completed experiment has no winner action',
+        AdActionSelectorService.name,
+        'completed experiment has no winner action',
+        {
           project_id: experiment.projectId,
           experiment_id: experiment.id,
           segment_id: experiment.segmentId,
-        }),
+        },
       );
 
       return null;

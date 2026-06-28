@@ -1,4 +1,4 @@
-import { Logger } from '@nestjs/common';
+import { AppLoggerService } from '../../logging/app-logger.service';
 import { AdCandidateMapper } from './ad-candidate.mapper';
 import type { AdCandidateRow } from '../repositories/ad-candidate.repository';
 
@@ -31,15 +31,16 @@ function row(overrides: Partial<AdCandidateRow> = {}): AdCandidateRow {
 }
 
 describe('AdCandidateMapper', () => {
-  const mapper = new AdCandidateMapper();
-  let warnSpy: jest.SpyInstance;
+  let logger: jest.Mocked<AppLoggerService>;
+  let mapper: AdCandidateMapper;
 
   beforeEach(() => {
-    warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
-  });
-
-  afterEach(() => {
-    warnSpy.mockRestore();
+    logger = {
+      info: jest.fn(),
+      warn: jest.fn(),
+      error: jest.fn(),
+    } as unknown as jest.Mocked<AppLoggerService>;
+    mapper = new AdCandidateMapper(logger);
   });
 
   it('maps common schema rows into candidate campaigns', () => {
@@ -195,11 +196,18 @@ describe('AdCandidateMapper', () => {
       ],
       ['main_hero'],
     );
-    const warningPayload = JSON.parse(warnSpy.mock.calls.at(-1)?.[0] as string);
+    const warningFields = logger.warn.mock.calls.at(-1)?.[2] as Record<
+      string,
+      unknown
+    >;
 
     expect(result.get('main_hero')).toEqual([]);
-    expect(warningPayload).toMatchObject({
-      message: 'Skipped invalid ad candidate rows',
+    expect(logger.warn).toHaveBeenCalledWith(
+      AdCandidateMapper.name,
+      'skipped invalid ad candidate rows',
+      expect.any(Object),
+    );
+    expect(warningFields).toMatchObject({
       skipped: {
         missing_external_campaign_id: {
           count: 1,
