@@ -2,32 +2,34 @@ import { Module } from '@nestjs/common';
 import { DatabaseModule } from '../database/database.module';
 import { RedisModule } from '../redis/redis.module';
 import { AdDecisionController } from './controllers/ad-decision.controller';
-import { AdCandidateRepository } from './repositories/ad-candidate.repository';
-import { AdCandidateMapper } from './services/ad-candidate.mapper';
-import { AdCandidateService } from './services/ad-candidate.service';
-import {
-  AdEventEmitter,
-  LoggingAdEventEmitterService,
-} from './services/ad-event-emitter.service';
+import { AdDecisionRepository } from './repositories/ad-decision.repository';
+import { ExperimentActionProbRepository } from './repositories/experiment-action-prob.repository';
+import { ExperimentRepository } from './repositories/experiment.repository';
+import { GeneratedContentRepository } from './repositories/generated-content.repository';
+import { SegmentRepository } from './repositories/segment.repository';
+import { UserProfileRepository } from './repositories/user-profile.repository';
+import { AdActionSelectorService } from './services/ad-action-selector.service';
+import { AdContentService } from './services/ad-content.service';
 import { AdDecisionService } from './services/ad-decision.service';
-import { AdTargetingService } from './services/ad-targeting.service';
-import { AdVariantService } from './services/ad-variant.service';
+import { AdExperimentService } from './services/ad-experiment.service';
+import { AdSegmentService } from './services/ad-segment.service';
 
 @Module({
   imports: [DatabaseModule, RedisModule],
   controllers: [AdDecisionController],
   providers: [
-    AdCandidateRepository,
-    AdCandidateMapper,
-    AdCandidateService,
-    AdTargetingService,
-    AdVariantService,
+    UserProfileRepository,
+    SegmentRepository,
+    ExperimentRepository,
+    ExperimentActionProbRepository,
+    GeneratedContentRepository,
+    AdDecisionRepository,
+    AdSegmentService,
+    AdExperimentService,
+    AdActionSelectorService,
+    AdContentService,
     AdDecisionService,
-    {
-      provide: AdEventEmitter,
-      useClass: LoggingAdEventEmitterService,
-    },
   ],
-  exports: [AdDecisionService, AdVariantService],
+  exports: [AdDecisionService],
 })
 export class AdsModule {}
