@@ -9,11 +9,17 @@ import { AdDecisionService } from '../services/ad-decision.service';
 import { adDecisionRequestSchema } from '../dto/ad-decision-request.dto';
 import type { AdDecisionResponseDto } from '../dto/ad-decision-response.dto';
 
+const AD_DECISION_PATHS = [
+  '/ads/decision',
+  '/api/ads/decision',
+  '/advertisements/decision',
+];
+
 @Controller()
 export class AdDecisionController {
   constructor(private readonly adDecisionService: AdDecisionService) {}
 
-  @Post('/ads/decision')
+  @Post(AD_DECISION_PATHS)
   @HttpCode(200)
   async decide(@Body() body: unknown): Promise<AdDecisionResponseDto> {
     const parsed = adDecisionRequestSchema.safeParse(body);
