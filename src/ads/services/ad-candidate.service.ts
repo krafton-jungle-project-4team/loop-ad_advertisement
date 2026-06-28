@@ -1,5 +1,9 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { AdCacheService } from '../../redis/ad-cache.service';
+import {
+  AppLoggerService,
+  errorMessage,
+} from '../../logging/app-logger.service';
 import type { MainPageAdSlot } from '../constants/ad-slots.constant';
 import { AdCandidateRepository } from '../repositories/ad-candidate.repository';
 import { AdCandidateMapper } from './ad-candidate.mapper';
@@ -7,12 +11,11 @@ import type { CandidateCampaign } from '../types/ad-decision.types';
 
 @Injectable()
 export class AdCandidateService {
-  private readonly logger = new Logger(AdCandidateService.name);
-
   constructor(
     private readonly adCacheService: AdCacheService,
     private readonly adCandidateRepository: AdCandidateRepository,
     private readonly adCandidateMapper: AdCandidateMapper,
+    private readonly logger: AppLoggerService,
   ) {}
 
   async getCandidatesBySlots(
@@ -41,7 +44,13 @@ export class AdCandidateService {
             await this.adCacheService.setCandidates(projectId, slot, candidates);
           } catch (error) {
             this.logger.warn(
-              `Redis cache write failed for ${slot}: ${(error as Error).message}`,
+              AdCandidateService.name,
+              'redis candidate cache write failed',
+              {
+                project_id: projectId,
+                slot_id: slot,
+                error_message: errorMessage(error),
+              },
             );
           }
         }),
@@ -50,9 +59,13 @@ export class AdCandidateService {
       return cached;
     } catch (error) {
       this.logger.warn(
-        `Redis candidate lookup failed, falling back to Postgres: ${
-          (error as Error).message
-        }`,
+        AdCandidateService.name,
+        'redis candidate lookup failed; falling back to postgres',
+        {
+          project_id: projectId,
+          slot_ids: slots,
+          error_message: errorMessage(error),
+        },
       );
 
       return this.loadCandidatesFromPostgres(projectId, slots);

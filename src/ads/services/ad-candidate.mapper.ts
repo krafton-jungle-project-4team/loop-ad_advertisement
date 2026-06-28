@@ -1,4 +1,5 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
+import { AppLoggerService } from '../../logging/app-logger.service';
 import {
   isMainPageAdSlot,
   type MainPageAdSlot,
@@ -32,7 +33,7 @@ interface SkipSummaryEntry {
 
 @Injectable()
 export class AdCandidateMapper {
-  private readonly logger = new Logger(AdCandidateMapper.name);
+  constructor(private readonly logger: AppLoggerService) {}
 
   toCandidatesBySlot(
     rows: AdCandidateRow[],
@@ -227,12 +228,9 @@ export class AdCandidateMapper {
       return;
     }
 
-    this.logger.warn(
-      JSON.stringify({
-        message: 'Skipped invalid ad candidate rows',
-        skipped: Object.fromEntries(skipSummary),
-      }),
-    );
+    this.logger.warn(AdCandidateMapper.name, 'skipped invalid ad candidate rows', {
+      skipped: Object.fromEntries(skipSummary),
+    });
   }
 
   private recordOptionalSkip(

@@ -1,5 +1,9 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { AdCacheService } from '../../redis/ad-cache.service';
+import {
+  AppLoggerService,
+  errorMessage,
+} from '../../logging/app-logger.service';
 import { SegmentRepository } from '../repositories/segment.repository';
 import { UserProfileRepository } from '../repositories/user-profile.repository';
 import type {
@@ -9,12 +13,11 @@ import type {
 
 @Injectable()
 export class AdSegmentService {
-  private readonly logger = new Logger(AdSegmentService.name);
-
   constructor(
     private readonly adCacheService: AdCacheService,
     private readonly userProfileRepository: UserProfileRepository,
     private readonly segmentRepository: SegmentRepository,
+    private readonly logger: AppLoggerService,
   ) {}
 
   async resolveSegment(projectId: string, userId: string): Promise<string> {
@@ -29,9 +32,12 @@ export class AdSegmentService {
       }
     } catch (error) {
       this.logger.warn(
-        `Redis segment lookup failed, falling back to Postgres: ${
-          (error as Error).message
-        }`,
+        AdSegmentService.name,
+        'redis segment lookup failed; falling back to postgres',
+        {
+          project_id: projectId,
+          error_message: errorMessage(error),
+        },
       );
     }
 
@@ -40,9 +46,11 @@ export class AdSegmentService {
     try {
       await this.adCacheService.setSegment(projectId, userId, segmentId);
     } catch (error) {
-      this.logger.warn(
-        `Redis segment cache write failed: ${(error as Error).message}`,
-      );
+      this.logger.warn(AdSegmentService.name, 'redis segment cache write failed', {
+        project_id: projectId,
+        segment_id: segmentId,
+        error_message: errorMessage(error),
+      });
     }
 
     return segmentId;

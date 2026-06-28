@@ -1,3 +1,4 @@
+import { AppLoggerService } from '../../logging/app-logger.service';
 import { AdCacheService } from '../../redis/ad-cache.service';
 import { SegmentRepository } from '../repositories/segment.repository';
 import { UserProfileRepository } from '../repositories/user-profile.repository';
@@ -74,16 +75,23 @@ function createService(overrides: {
           : defaultSegment,
       ),
   } as unknown as SegmentRepository;
+  const logger = {
+    info: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn(),
+  } as unknown as jest.Mocked<AppLoggerService>;
 
   return {
     service: new AdSegmentService(
       adCacheService,
       userProfileRepository,
       segmentRepository,
+      logger,
     ),
     adCacheService,
     userProfileRepository,
     segmentRepository,
+    logger,
   };
 }
 
