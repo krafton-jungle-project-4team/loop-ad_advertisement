@@ -73,4 +73,31 @@ describe('AdCacheService', () => {
     );
     expect(service.ttlSeconds()).toBe(60);
   });
+
+  it('reads and writes MVP segment cache keys', async () => {
+    const redisService = {
+      mGet: jest.fn().mockResolvedValue(['seg_30m_mobile_fresh']),
+      setEx: jest.fn().mockResolvedValue(undefined),
+    } as unknown as RedisService;
+    const service = new AdCacheService(redisService);
+
+    await expect(
+      service.getSegment('demo_project', 'user_001'),
+    ).resolves.toBe('seg_30m_mobile_fresh');
+    await service.setSegment(
+      'demo_project',
+      'user_001',
+      'seg_30m_mobile_fresh',
+    );
+
+    expect(redisService.mGet).toHaveBeenCalledWith([
+      'seg:demo_project:user_001',
+    ]);
+    expect(redisService.setEx).toHaveBeenCalledWith(
+      'seg:demo_project:user_001',
+      60,
+      'seg_30m_mobile_fresh',
+    );
+    expect(service.segmentTtlSeconds()).toBe(60);
+  });
 });

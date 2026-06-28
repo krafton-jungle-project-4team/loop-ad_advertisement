@@ -13,7 +13,7 @@ import type { AdDecisionResponseDto } from '../dto/ad-decision-response.dto';
 export class AdDecisionController {
   constructor(private readonly adDecisionService: AdDecisionService) {}
 
-  @Post('/v1/ad-decision')
+  @Post('/ads/decision')
   @HttpCode(200)
   async decide(@Body() body: unknown): Promise<AdDecisionResponseDto> {
     const parsed = adDecisionRequestSchema.safeParse(body);

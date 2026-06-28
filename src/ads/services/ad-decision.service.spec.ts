@@ -1,243 +1,268 @@
 import { Logger } from '@nestjs/common';
-import { AdCandidateService } from './ad-candidate.service';
+import { AdDecisionRepository } from '../repositories/ad-decision.repository';
+import { AdActionSelectorService } from './ad-action-selector.service';
+import { AdContentService } from './ad-content.service';
 import { AdDecisionService } from './ad-decision.service';
-import { AdEventEmitter } from './ad-event-emitter.service';
-import { AdTargetingService } from './ad-targeting.service';
-import { AdVariantService } from './ad-variant.service';
+import { AdExperimentService } from './ad-experiment.service';
+import { AdSegmentService } from './ad-segment.service';
 import type {
   AdDecisionRequest,
-  CandidateCampaign,
+  Experiment,
+  GeneratedContent,
 } from '../types/ad-decision.types';
 
-function creative(campaignId: string, variant: 'A' | 'B') {
+const request: AdDecisionRequest = {
+  project_id: 'demo_project',
+  user_id: 'user_001',
+  slot_id: 'main_banner',
+  page_url: '/products/chicken_001',
+  category: 'fresh_food',
+  device: 'mobile',
+};
+
+const runningExperiment: Experiment = {
+  id: 'exp_001',
+  projectId: 'demo_project',
+  segmentId: 'seg_30m_mobile_fresh',
+  recommendationId: 'rec_001',
+  status: 'running',
+  goalMetric: 'purchase_rate',
+  targetValue: 0.05,
+  winnerActionId: null,
+  startedAt: new Date('2026-01-01T00:00:00.000Z'),
+  endedAt: null,
+  createdAt: new Date('2026-01-01T00:00:00.000Z'),
+};
+
+const selectedContent: GeneratedContent = {
+  contentId: 'content_discount',
+  projectId: 'demo_project',
+  recommendationId: 'rec_001',
+  actionId: 'act_discount',
+  contentUrl:
+    'https://s3.ap-northeast-2.amazonaws.com/loop-ad-demo/content_discount.png',
+  isDefault: false,
+};
+
+const defaultContent: GeneratedContent = {
+  contentId: 'content_default_banner',
+  projectId: 'demo_project',
+  recommendationId: null,
+  actionId: null,
+  contentUrl:
+    'https://s3.ap-northeast-2.amazonaws.com/loop-ad-demo/default_banner.png',
+  isDefault: true,
+};
+
+function createService(overrides: {
+  segmentId?: string;
+  experiment?: Experiment | null;
+  actionId?: string | null;
+  content?: GeneratedContent;
+  isDefaultFallback?: boolean;
+  decisionId?: string;
+  insertRejects?: Error;
+} = {}) {
+  const adSegmentService = {
+    resolveSegment: jest
+      .fn()
+      .mockResolvedValue(overrides.segmentId ?? 'seg_30m_mobile_fresh'),
+  } as unknown as AdSegmentService;
+  const adExperimentService = {
+    findExperimentForSegment: jest
+      .fn()
+      .mockResolvedValue(
+        Object.prototype.hasOwnProperty.call(overrides, 'experiment')
+          ? overrides.experiment
+          : runningExperiment,
+      ),
+  } as unknown as AdExperimentService;
+  const adActionSelectorService = {
+    selectAction: jest.fn().mockResolvedValue(
+      overrides.actionId === null
+        ? null
+        : { actionId: overrides.actionId ?? 'act_discount' },
+    ),
+  } as unknown as AdActionSelectorService;
+  const adContentService = {
+    resolveContent: jest.fn().mockResolvedValue({
+      content: overrides.content ?? selectedContent,
+      isDefaultFallback: overrides.isDefaultFallback ?? false,
+    }),
+    getDefaultContent: jest.fn().mockResolvedValue(defaultContent),
+  } as unknown as AdContentService;
+  const adDecisionRepository = {
+    insert: jest.fn().mockImplementation(() => {
+      if (overrides.insertRejects) {
+        return Promise.reject(overrides.insertRejects);
+      }
+
+      return Promise.resolve(overrides.decisionId ?? '101');
+    }),
+  } as unknown as AdDecisionRepository;
+
   return {
-    creative_id: `cr_${campaignId}_${variant}`,
-    campaign_id: campaignId,
-    variant,
-    headline: `${campaignId} ${variant}`,
-    image_url: `https://placehold.co/800x400?text=${campaignId}-${variant}`,
-    target_url: `/category/${campaignId}`,
+    service: new AdDecisionService(
+      adSegmentService,
+      adExperimentService,
+      adActionSelectorService,
+      adContentService,
+      adDecisionRepository,
+    ),
+    adSegmentService,
+    adExperimentService,
+    adActionSelectorService,
+    adContentService,
+    adDecisionRepository,
   };
-}
-
-function candidate(
-  campaign_id: string,
-  slot_id: CandidateCampaign['placement']['slot_id'],
-  priority: number,
-  target: CandidateCampaign['target'],
-): CandidateCampaign {
-  return {
-    campaign_id,
-    name: campaign_id,
-    priority,
-    status: 'active',
-    target,
-    placement: {
-      slot_id,
-      weight: 100,
-    },
-    creatives: [creative(campaign_id, 'A'), creative(campaign_id, 'B')],
-  };
-}
-
-const seedCandidates = new Map([
-  [
-    'main_hero',
-    [
-      candidate('camp_fresh_01', 'main_hero', 10, {
-        category: 'fresh_food',
-        age_groups: ['30s', '40s'],
-        gender: null,
-      }),
-      candidate('camp_pet_01', 'main_hero', 8, {
-        category: 'pet',
-        age_groups: ['20s', '30s'],
-        gender: null,
-      }),
-    ],
-  ],
-  [
-    'main_side_left',
-    [
-      candidate('camp_digital_01', 'main_side_left', 5, {
-        category: 'digital',
-        age_groups: null,
-        gender: null,
-      }),
-    ],
-  ],
-  [
-    'main_side_right',
-    [
-      candidate('camp_fashion_01', 'main_side_right', 5, {
-        category: 'fashion',
-        age_groups: ['20s', '30s'],
-        gender: 'female',
-      }),
-    ],
-  ],
-]) as Map<CandidateCampaign['placement']['slot_id'], CandidateCampaign[]>;
-
-function request(
-  slot: CandidateCampaign['placement']['slot_id'],
-  context: AdDecisionRequest['context'],
-): AdDecisionRequest {
-  return {
-    project_id: 'loopad-demo-shop',
-    user_id: 'user_001',
-    session_id: 'session_001',
-    slots: [slot],
-    context,
-  };
-}
-
-function createService(candidates = seedCandidates) {
-  const candidateService = {
-    getCandidatesBySlots: jest.fn().mockResolvedValue(candidates),
-  } as unknown as AdCandidateService;
-  const eventEmitter = {
-    emit: jest.fn(),
-  } as unknown as AdEventEmitter;
-  const service = new AdDecisionService(
-    candidateService,
-    new AdTargetingService(),
-    new AdVariantService(),
-    eventEmitter,
-  );
-
-  return { service, eventEmitter };
 }
 
 describe('AdDecisionService', () => {
-  it.each([
-    [{ category: 'fresh_food', age_group: '30s' }, 'camp_fresh_01'],
-    [{ category: 'pet', age_group: '20s' }, 'camp_pet_01'],
-    [{ category: 'pet', age_group: '30s' }, 'camp_pet_01'],
-  ])('selects main_hero campaign for %p', async (context, campaignId) => {
-    const { service } = createService();
+  it('returns the MVP decision fields and persists a normal selected decision', async () => {
+    const { service, adDecisionRepository } = createService();
 
-    const response = await service.decide(request('main_hero', context));
+    const response = await service.decide(request);
 
-    expect(response.decisions).toHaveLength(1);
-    expect(response.decisions[0].campaign_id).toBe(campaignId);
-  });
-
-  it.each([
-    { category: 'book', age_group: '50s' },
-    { category: 'fresh_food', age_group: '20s' },
-  ])('returns a full null decision for non-matching main_hero %p', async (context) => {
-    const { service, eventEmitter } = createService();
-
-    const response = await service.decide(request('main_hero', context));
-
-    expect(response.decisions[0]).toEqual({
-      slot_id: 'main_hero',
-      creative_id: null,
-      campaign_id: null,
-      variant: null,
-      creative: null,
+    expect(response).toEqual({
+      decision_id: '101',
+      project_id: 'demo_project',
+      user_id: 'user_001',
+      segment_id: 'seg_30m_mobile_fresh',
+      experiment_id: 'exp_001',
+      recommendation_id: 'rec_001',
+      action_id: 'act_discount',
+      content_id: 'content_discount',
+      content_url:
+        'https://s3.ap-northeast-2.amazonaws.com/loop-ad-demo/content_discount.png',
     });
-    expect(eventEmitter.emit).not.toHaveBeenCalled();
-  });
-
-  it('supports side-slot gender strict matching', async () => {
-    const { service } = createService();
-
-    await expect(
-      service.decide(
-        request('main_side_right', {
-          category: 'fashion',
-          age_group: '20s',
-          gender: 'female',
-        }),
-      ),
-    ).resolves.toMatchObject({
-      decisions: [{ campaign_id: 'camp_fashion_01' }],
-    });
-    await expect(
-      service.decide(
-        request('main_side_right', {
-          category: 'fashion',
-          age_group: '20s',
-          gender: 'male',
-        }),
-      ),
-    ).resolves.toMatchObject({
-      decisions: [{ campaign_id: null }],
-    });
-    await expect(
-      service.decide(
-        request('main_side_right', {
-          category: 'fashion',
-          age_group: '20s',
-          gender: null,
-        }),
-      ),
-    ).resolves.toMatchObject({
-      decisions: [{ campaign_id: null }],
+    expect(adDecisionRepository.insert).toHaveBeenCalledWith({
+      projectId: 'demo_project',
+      userId: 'user_001',
+      segmentId: 'seg_30m_mobile_fresh',
+      experimentId: 'exp_001',
+      actionId: 'act_discount',
+      contentId: 'content_discount',
     });
   });
 
-  it('logs same-priority conflicts while keeping deterministic tiebreakers', async () => {
-    const candidates = new Map([
-      [
-        'main_hero',
-        [
-          candidate('camp_beta', 'main_hero', 10, {
-            category: 'pet',
-            age_groups: null,
-            gender: null,
-          }),
-          candidate('camp_alpha', 'main_hero', 10, {
-            category: 'pet',
-            age_groups: null,
-            gender: null,
-          }),
-        ],
-      ],
-    ]) as Map<CandidateCampaign['placement']['slot_id'], CandidateCampaign[]>;
-    const { service } = createService(candidates);
+  it('uses default content without insert when no experiment exists', async () => {
+    const {
+      service,
+      adActionSelectorService,
+      adContentService,
+      adDecisionRepository,
+    } = createService({ experiment: null });
+
+    const response = await service.decide(request);
+
+    expect(response).toMatchObject({
+      decision_id: '',
+      segment_id: 'seg_30m_mobile_fresh',
+      experiment_id: '',
+      recommendation_id: '',
+      action_id: '',
+      content_id: 'content_default_banner',
+    });
+    expect(adActionSelectorService.selectAction).not.toHaveBeenCalled();
+    expect(adContentService.getDefaultContent).toHaveBeenCalledWith(
+      'demo_project',
+    );
+    expect(adDecisionRepository.insert).not.toHaveBeenCalled();
+  });
+
+  it('uses default banner without insert when selected action content is missing', async () => {
+    const { service, adDecisionRepository } = createService({
+      content: defaultContent,
+      isDefaultFallback: true,
+    });
+
+    const response = await service.decide(request);
+
+    expect(response).toMatchObject({
+      decision_id: '',
+      experiment_id: 'exp_001',
+      recommendation_id: 'rec_001',
+      action_id: 'act_discount',
+      content_id: 'content_default_banner',
+    });
+    expect(adDecisionRepository.insert).not.toHaveBeenCalled();
+  });
+
+  it('uses default content without insert when a completed experiment has no winner', async () => {
+    const completedWithoutWinner: Experiment = {
+      ...runningExperiment,
+      status: 'completed',
+      winnerActionId: null,
+      endedAt: new Date('2026-01-02T00:00:00.000Z'),
+    };
+    const { service, adDecisionRepository } = createService({
+      experiment: completedWithoutWinner,
+      actionId: null,
+    });
+
+    const response = await service.decide(request);
+
+    expect(response).toMatchObject({
+      decision_id: '',
+      experiment_id: 'exp_001',
+      recommendation_id: 'rec_001',
+      action_id: '',
+      content_id: 'content_default_banner',
+    });
+    expect(adDecisionRepository.insert).not.toHaveBeenCalled();
+  });
+
+  it('still returns normal content with an empty decision_id when insert fails', async () => {
     const errorSpy = jest
       .spyOn(Logger.prototype, 'error')
       .mockImplementation(() => undefined);
+    const { service } = createService({
+      insertRejects: new Error('insert failed'),
+    });
 
     try {
-      const response = await service.decide(
-        request('main_hero', { category: 'pet' }),
-      );
+      const response = await service.decide(request);
 
-      expect(response.decisions[0].campaign_id).toBe('camp_alpha');
-      expect(errorSpy).toHaveBeenCalledTimes(1);
-
-      const logPayload = JSON.parse(String(errorSpy.mock.calls[0][0]));
-      expect(logPayload).toMatchObject({
-        level: 'error',
-        message: 'same-slot same-priority matched campaigns',
-        slot_id: 'main_hero',
-        priority: 10,
-        campaign_ids: ['camp_alpha', 'camp_beta'],
+      expect(response).toMatchObject({
+        decision_id: '',
+        content_id: 'content_discount',
+        content_url:
+          'https://s3.ap-northeast-2.amazonaws.com/loop-ad-demo/content_discount.png',
       });
-      expect(logPayload).not.toHaveProperty('user_id');
-      expect(logPayload).not.toHaveProperty('session_id');
+      expect(errorSpy).toHaveBeenCalled();
     } finally {
       errorSpy.mockRestore();
     }
   });
 
-  it('emits one impression per non-null decision', async () => {
-    const { service, eventEmitter } = createService();
+  it('persists a completed experiment winner when action selection succeeds', async () => {
+    const completedWithWinner: Experiment = {
+      ...runningExperiment,
+      status: 'completed',
+      winnerActionId: 'act_bundle',
+      endedAt: new Date('2026-01-02T00:00:00.000Z'),
+    };
+    const { service, adDecisionRepository } = createService({
+      experiment: completedWithWinner,
+      actionId: 'act_bundle',
+      content: {
+        ...selectedContent,
+        contentId: 'content_bundle',
+        actionId: 'act_bundle',
+      },
+    });
 
-    await service.decide(
-      request('main_side_left', {
-        category: 'digital',
-      }),
-    );
+    const response = await service.decide(request);
 
-    expect(eventEmitter.emit).toHaveBeenCalledTimes(1);
-    expect(eventEmitter.emit).toHaveBeenCalledWith(
+    expect(response).toMatchObject({
+      decision_id: '101',
+      action_id: 'act_bundle',
+      content_id: 'content_bundle',
+    });
+    expect(adDecisionRepository.insert).toHaveBeenCalledWith(
       expect.objectContaining({
-        event_type: 'ad_impression',
-        campaign_id: 'camp_digital_01',
+        actionId: 'act_bundle',
+        contentId: 'content_bundle',
       }),
     );
   });

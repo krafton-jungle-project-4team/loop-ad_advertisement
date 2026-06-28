@@ -6,6 +6,7 @@ import type {
 import type { MainPageAdSlot } from '../ads/constants/ad-slots.constant';
 
 const CANDIDATE_CACHE_TTL_SECONDS = 60;
+const SEGMENT_CACHE_TTL_SECONDS = 60;
 
 @Injectable()
 export class AdCacheService {
@@ -13,6 +14,10 @@ export class AdCacheService {
 
   cacheKey(projectId: string, slotId: MainPageAdSlot): string {
     return `tenant:${projectId}:slot:${slotId}:candidates`;
+  }
+
+  segmentCacheKey(projectId: string, userId: string): string {
+    return `seg:${projectId}:${userId}`;
   }
 
   async getCandidates(
@@ -50,7 +55,31 @@ export class AdCacheService {
     );
   }
 
+  async getSegment(projectId: string, userId: string): Promise<string | null> {
+    const [segmentId] = await this.redisService.mGet([
+      this.segmentCacheKey(projectId, userId),
+    ]);
+
+    return segmentId ?? null;
+  }
+
+  async setSegment(
+    projectId: string,
+    userId: string,
+    segmentId: string,
+  ): Promise<void> {
+    await this.redisService.setEx(
+      this.segmentCacheKey(projectId, userId),
+      SEGMENT_CACHE_TTL_SECONDS,
+      segmentId,
+    );
+  }
+
   ttlSeconds(): number {
     return CANDIDATE_CACHE_TTL_SECONDS;
+  }
+
+  segmentTtlSeconds(): number {
+    return SEGMENT_CACHE_TTL_SECONDS;
   }
 }
