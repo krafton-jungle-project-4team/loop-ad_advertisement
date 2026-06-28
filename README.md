@@ -1,69 +1,179 @@
-# LoopAd Advertisement Server
+# LoopAd Advertisement API
 
-LoopAd 데모 쇼핑 서비스의 MVP 광고 서버입니다.
+LoopAd Advertisement API는 데모 쇼핑 서비스의 광고 노출 결정 서버입니다.
 
-이 서버의 역할은 메인 페이지 광고 슬롯마다 어떤 광고를 보여줄지 빠르게 결정하는 것입니다. MVP 범위는 광고 플랫폼 전체가 아니라, 데모 쇼핑 서비스의 메인 페이지 광고 노출 결정을 검증하는 데 집중합니다.
+이 서버는 MVP loop 중 **ad exposure decision** 단계만 담당합니다. 쇼핑 요청의
+`project_id`와 `user_id`를 받아 저장된 segment, experiment, action probability,
+generated content를 조회하고, 하나의 광고 content decision을 반환합니다.
 
-## 프로젝트 개요
+## 역할
 
-- Framework: NestJS 11
-- Language: TypeScript
-- Database: PostgreSQL
-- Cache: Redis
-- DB access: `pg` raw SQL
-- Package manager: npm
-- Main API:
-  - `POST /v1/ad-decision`
-- Health check:
-  - `GET /health`
+이 repository는 하나의 NestJS 서버 앱입니다.
 
-MVP에서 지원하는 광고 슬롯은 메인 페이지 슬롯 3개뿐입니다.
+| 항목 | 값 |
+|---|---|
+| Framework | NestJS 11 |
+| Language | TypeScript |
+| Database | PostgreSQL |
+| Cache | Redis-compatible Valkey |
+| DB access | `pg` raw SQL |
+| Package manager | npm |
+| Health check | `GET /health` |
+| Main API | `POST /ads/decision` |
 
-```txt
-main_hero
-main_side_left
-main_side_right
+광고 결정은 `user_id` 기반입니다. MVP에서는 `anonymous_id`를 만들거나 사용하지
+않습니다.
+
+## 제공하지 않는 것
+
+이 서버는 아래 기능을 제공하지 않습니다.
+
+- click tracking endpoint
+- SDK/Ingest event 수집
+- AI 추천 계산 또는 Thompson Sampling 계산
+- content generation
+- Kafka, ClickHouse, Kinesis producer
+- dashboard, analytics pipeline, ad-management platform
+
+`ad_impression`, `ad_click`, `purchase` 같은 결과 이벤트는 SDK/Ingest flow에서
+수집합니다. 이때 광고 노출과 연결되는 이벤트는 이 서버가 반환한 `decision_id`를
+함께 보내야 합니다.
+
+## HTTP API
+
+| Method | Path | 설명 |
+|---|---|---|
+| `GET` | `/health` | ECS/NLB health check. 정상일 때 `200`을 반환합니다. |
+| `POST` | `/ads/decision` | 한 요청에 대해 하나의 광고 content decision을 반환합니다. |
+
+### `POST /ads/decision`
+
+요청 `Content-Type`은 `application/json`이어야 합니다.
+
+Request:
+
+```json
+{
+  "project_id": "demo_project",
+  "user_id": "user_001",
+  "slot_id": "main_banner",
+  "page_url": "/products/chicken_001",
+  "category": "fresh_food",
+  "device": "mobile"
+}
 ```
 
-상세 페이지 슬롯, 검색 페이지 슬롯, 입찰 시스템, 추천 결과 소비 전용 decisioning, Kafka/Kinesis 이벤트 파이프라인, 관리자 UI는 MVP 범위가 아닙니다.
+`project_id`와 `user_id`는 필수입니다. `slot_id`, `page_url`, `category`,
+`device`는 요청 context입니다. MVP segment matching은 요청 context가 아니라
+`user_profiles`에 저장된 사용자 속성을 기준으로 수행합니다.
 
-## 핵심 동작
+명세에 없는 최상위 필드는 거부합니다. 특히 `anonymous_id`는 MVP에서 금지합니다.
 
-광고 결정은 아래 순서로 진행됩니다.
+Response:
 
-```txt
-Placement → Campaign → Creative
+```json
+{
+  "decision_id": "1",
+  "project_id": "demo_project",
+  "user_id": "user_001",
+  "segment_id": "seg_30m_mobile_fresh",
+  "experiment_id": "exp_001",
+  "recommendation_id": "rec_001",
+  "action_id": "act_discount",
+  "content_id": "content_discount",
+  "content_url": "https://s3.ap-northeast-2.amazonaws.com/loop-ad-demo/content_discount.png"
+}
 ```
 
-1. Placement: 공용 `segment_ad_mappings` read model의 `execution_hint_json.slot_id`로 요청 슬롯에 노출 가능한 캠페인 후보를 찾습니다.
-2. Campaign: 사용자 context와 캠페인 target 조건을 비교해 매칭되는 캠페인을 고릅니다.
-3. Creative: 선택된 캠페인 안에서 A/B creative variant를 결정합니다.
+`decision_id`는 `ad_decisions.id`를 문자열로 반환한 값입니다. 이후 SDK/Ingest로
+들어오는 관련 결과 이벤트는 같은 `decision_id`를 포함해야 합니다.
 
-Campaign selection은 rule-based targeting입니다.
+주요 오류 응답:
 
-- target 조건은 AND 로직으로 매칭합니다.
-- 비어 있는 target 필드는 pass-through 조건입니다.
-- category가 주요 targeting 축입니다.
-- age, gender는 보조 targeting 축입니다.
-- 후보 target에 `gender`가 있으면 `context.gender`가 정확히 일치해야 합니다.
-- `context.gender`가 없거나 `null`이면 gender-targeted campaign은 매칭되지 않습니다.
-- 매칭된 campaign 중 priority가 높은 campaign이 선택됩니다.
-- weight-based distribution은 MVP 범위가 아닙니다.
+- `400 Bad Request`: 필수 필드 누락, 빈 문자열, 명세 외 필드 포함
+- `500 Internal Server Error`: default segment 또는 default content seed 누락 등 서버가 복구할 수 없는 설정 문제
 
-A/B creative selection은 랜덤이 아니라 deterministic hashing입니다.   
-추천 결과 소비 전용 전환 전까지는 광고 서버가 임시로 A/B variant를 계산합니다.
+## Decision Flow
+
+MVP 광고 결정은 아래 순서로 진행합니다.
 
 ```txt
-input = user_id + ":" + campaign_id
-hash = MurmurHash3 x86 32-bit, seed 0
-bucket = hash % 100
-bucket < 50 → A
-bucket >= 50 → B
+user_id
+  -> user_profiles
+  -> segment_definitions
+  -> experiments
+  -> experiment_action_probs
+  -> generated_contents
+  -> ad_decisions
 ```
 
-이 서버는 클릭 추적을 담당하지 않습니다. `/v1/ad-decision`은 광고 결정 결과만 반환하며, signed tracking token을 만들지 않습니다.
+의미는 다음과 같습니다.
 
-## 로컬 실행
+1. `project_id + user_id`로 segment를 resolve합니다.
+2. Redis `seg:{project_id}:{user_id}` cache를 먼저 확인합니다.
+3. Redis miss 또는 Redis 장애 시 Postgres에서 `user_profiles`와 `segment_definitions`를 조회합니다.
+4. segment 기준으로 `running` experiment를 우선 조회하고, 없으면 최신 `completed` experiment를 사용합니다.
+5. `completed` experiment에 `winner_action_id`가 있으면 winner action을 사용합니다.
+6. `running` experiment는 저장된 `experiment_action_probs.probability`를 읽고 weighted random으로 action을 선택합니다.
+7. 선택한 action의 `generated_contents.content_url`을 조회합니다.
+8. 정상 선택 경로에서는 `ad_decisions`에 저장하고 생성된 id를 `decision_id`로 반환합니다.
+
+광고 서버는 probability를 계산하거나 업데이트하지 않습니다. AI/experiment 서버가
+저장한 probability를 읽고 선택만 수행합니다.
+
+## Fallback Policy
+
+MVP fallback은 product behavior이며 runtime env fallback이 아닙니다.
+
+| 상황 | 동작 |
+|---|---|
+| user profile 없음 | seed data의 default segment 사용 |
+| segment match 없음 | seed data의 default segment 사용 |
+| active experiment 없음 | seed data의 default banner content 반환, `decision_id`는 빈 문자열 |
+| probability row 없음 | 같은 recommendation의 available action을 equal weight로 선택 |
+| selected action content 없음 | seed data의 default banner content 반환, `decision_id`는 빈 문자열 |
+| decision insert 실패 | content 응답은 유지하고 `decision_id`는 빈 문자열 |
+
+default segment와 default banner는 seed data에서만 가져옵니다. required runtime env에
+기본값을 넣어 fallback하지 않습니다.
+
+현재 fallback 경로는 `ad_decisions`에 저장하지 않습니다. `ad_decisions` linkage
+컬럼의 nullable 정책이 확정되면 fallback decision 저장 정책은 별도 변경으로
+다룹니다.
+
+## Required Env
+
+서버는 시작 시점에 required env를 검증합니다. 기본값 없이 실패해야 합니다.
+
+| Env | 예시 | 설명 |
+|---|---|---|
+| `LOOPAD_ENV` | `local` | 실행 환경 이름 |
+| `LOOPAD_SERVICE_ID` | `advertisement-api` | 서비스 식별자. 다른 값이면 실패합니다. |
+| `PORT` | `8080` | `0.0.0.0:${PORT}`로 listen합니다. |
+| `LOOPAD_AURORA_HOST` | `127.0.0.1` | PostgreSQL hostname |
+| `LOOPAD_AURORA_PORT` | `55432` | PostgreSQL port |
+| `LOOPAD_AURORA_DATABASE` | `loopad_ad_decision` | PostgreSQL database |
+| `LOOPAD_AURORA_USERNAME` | `loopad` | PostgreSQL username |
+| `LOOPAD_AURORA_PASSWORD` | `loopad` | PostgreSQL password |
+| `LOOPAD_REDIS_URL` | `redis://127.0.0.1:6379` | Redis-compatible endpoint |
+
+deployed environment에서 Redis는 infra가 제공하는 `LOOPAD_REDIS_URL`을 그대로
+사용합니다. 앱 코드에서 local Redis 주소로 조용히 fallback하지 않습니다.
+
+## Schema Tool Env
+
+DB schema script는 standard libpq env를 사용합니다.
+
+| Env | 예시 | 설명 |
+|---|---|---|
+| `PGHOST` | `127.0.0.1` | PostgreSQL host |
+| `PGPORT` | `55432` | PostgreSQL port |
+| `PGUSER` | `loopad` | PostgreSQL user |
+| `PGPASSWORD` | `loopad` | PostgreSQL password |
+| `PGDATABASE` | `loopad_ad_decision` | PostgreSQL database |
+| `PGSSLMODE` | `disable` | local schema tool SSL mode |
+
+## Local Development
 
 ### 1. 패키지 설치
 
@@ -77,26 +187,17 @@ npm install
 docker compose up -d
 ```
 
-기본 포트는 아래와 같습니다.
+로컬 기본 endpoint:
 
-```txt
-Postgres: 127.0.0.1:55432
-Redis:    127.0.0.1:6379
-```
-
-Postgres host port는 로컬 `5432` 충돌을 피하기 위해 기본값이 `55432`입니다.
+| Service | URL |
+|---|---|
+| Postgres | `127.0.0.1:55432` |
+| Redis | `redis://127.0.0.1:6379` |
 
 ### 3. 환경변수 로드
 
-이 프로젝트는 `.env` 파일을 앱에서 자동으로 로드하지 않습니다. DB 스크립트와 앱 서버를 실행할 터미널에서 환경변수를 먼저 로드해야 합니다.
-
-```bash
-set -a
-source .env.example
-set +a
-```
-
-실제 개발에서는 `.env.example`을 참고해 로컬용 `.env.local`을 만들고, 아래처럼 로드해도 됩니다. `.env.local`은 커밋하지 않습니다.
+이 앱은 `.env` 파일을 자동으로 로드하지 않습니다. 앱 서버와 DB script를 실행할
+터미널에서 환경변수를 먼저 로드합니다.
 
 ```bash
 set -a
@@ -104,7 +205,7 @@ source .env.local
 set +a
 ```
 
-중요한 환경변수:
+로컬 예시:
 
 ```txt
 LOOPAD_ENV=local
@@ -125,7 +226,7 @@ PGDATABASE=loopad_ad_decision
 PGSSLMODE=disable
 ```
 
-`LOOPAD_*`, `PORT` 중 하나라도 없거나 형식이 틀리면 서버가 시작 시점에 실패합니다.
+`.env`, `.env.local`, `.env.*.local`은 커밋하지 않습니다.
 
 ### 4. DB schema 적용 및 seed 입력
 
@@ -135,11 +236,12 @@ npm run db:verify
 npm run db:seed
 ```
 
-- `db:migrate`: `database/schema.sql`을 sqldef로 적용합니다.
-- `db:verify`: DB schema drift를 확인합니다.
-- `db:seed`: demo project, campaign, creative, recommendation result, segment ad mapping 데이터를 넣습니다.
+- `db:migrate`: `database/schema.sql` target schema를 적용합니다.
+- `db:verify`: schema drift를 확인합니다.
+- `db:seed`: demo segment, experiment, probability, generated content seed를 입력합니다.
 
-이미 seed가 들어간 DB에서 `npm run db:seed`를 다시 실행하면 primary key 중복 오류가 날 수 있습니다. 이 경우는 데이터가 이미 들어간 상태라는 뜻입니다.
+Seed는 재실행 시 primary key 중복 오류가 날 수 있습니다. 이 경우는 이미 같은 seed가
+들어간 상태라는 뜻입니다.
 
 ### 5. 앱 서버 실행
 
@@ -147,312 +249,101 @@ npm run db:seed
 npm run dev
 ```
 
-로컬 예시 포트는 `PORT=8080`입니다.
-
-```txt
-http://localhost:8080
-```
-
-Health check:
-
-```txt
-http://localhost:8080/health
-```
-
-## Postman 빠른 테스트
-
-### 정상 광고 결정 테스트
-
-Postman 설정:
-
-```txt
-Method: POST
-URL: http://localhost:8080/v1/ad-decision
-Headers:
-  Content-Type: application/json
-Body:
-  raw 선택 → JSON 선택
-```
-
-Body에는 이것만 붙여넣습니다.
-
-```json
-{
-  "project_id": "loopad-demo-shop",
-  "user_id": "user_001",
-  "session_id": "session_001",
-  "slots": ["main_hero"],
-  "context": {
-    "page_url": "/",
-    "device": "mobile",
-    "category": "fresh_food",
-    "age_group": "30s",
-    "gender": null
-  }
-}
-```
-
-정상이라면 `main_hero` 슬롯에 대해 `camp_fresh_01` 캠페인이 선택됩니다.
-
-`user_001:camp_fresh_01`의 MurmurHash3 bucket은 `44`이고, `44 < 50`이므로 variant는 `A`입니다. 따라서 creative는 외부 creative ID인 `cr_fresh_A`가 나오는 것이 정상입니다.
-
-응답 예시:
-
-```json
-{
-  "decisions": [
-    {
-      "slot_id": "main_hero",
-      "creative_id": "cr_fresh_A",
-      "campaign_id": "camp_fresh_01",
-      "variant": "A",
-      "creative": {
-        "image_url": "https://placehold.co/800x400?text=fresh-A",
-        "target_url": "/category/fresh_food",
-        "headline": "신선한 닭가슴살 30% 할인"
-      }
-    }
-  ]
-}
-```
-
-### 빈 슬롯 테스트
-
-매칭되는 캠페인이 없으면 fallback 광고를 억지로 넣지 않고 null decision을 반환합니다.
-
-Postman에서 Body를 아래처럼 바꿔서 보냅니다.
-
-```json
-{
-  "project_id": "loopad-demo-shop",
-  "user_id": "user_001",
-  "session_id": "session_001",
-  "slots": ["main_hero"],
-  "context": {
-    "page_url": "/",
-    "device": "mobile",
-    "category": "book",
-    "age_group": "50s",
-    "gender": null
-  }
-}
-```
-
-정상 응답:
-
-```json
-{
-  "decisions": [
-    {
-      "slot_id": "main_hero",
-      "creative_id": null,
-      "campaign_id": null,
-      "variant": null,
-      "creative": null
-    }
-  ]
-}
-```
-
-## Click API
-
-이 서버는 클릭 추적 API를 제공하지 않습니다. `POST /v1/ad-click`은 등록되지 않은 endpoint이며, 클릭 추적은 다른 서비스의 책임입니다.
-
-## API 규칙
-
-### POST /v1/ad-decision
-
-요청의 `slots`는 반드시 배열이어야 합니다.
-
-```json
-{
-  "project_id": "loopad-demo-shop",
-  "user_id": "user_123",
-  "session_id": "session_456",
-  "slots": ["main_hero", "main_side_left", "main_side_right"],
-  "context": {
-    "page_url": "/",
-    "device": "mobile",
-    "category": "fresh_food",
-    "age_group": "30s",
-    "gender": null
-  }
-}
-```
-
-응답은 요청한 슬롯 순서를 보존하고, 요청 슬롯마다 decision 하나를 반환합니다.
-
-```json
-{
-  "decisions": [
-    {
-      "slot_id": "main_hero",
-      "creative_id": "cr_fresh_A",
-      "campaign_id": "camp_fresh_01",
-      "variant": "A",
-      "creative": {
-        "image_url": "https://placehold.co/800x400?text=fresh-A",
-        "target_url": "/category/fresh_food",
-        "headline": "신선한 닭가슴살 30% 할인"
-      }
-    }
-  ]
-}
-```
-
-매칭 실패 시 해당 슬롯 decision은 아래처럼 반환됩니다.
-
-```json
-{
-  "slot_id": "main_hero",
-  "creative_id": null,
-  "campaign_id": null,
-  "variant": null,
-  "creative": null
-}
-```
-
-## Seed 데이터
-
-`database/seed.sql`은 demo 검증용 데이터를 넣습니다.
-
-### Placements
-
-`campaigns.external_campaign_id`가 API의 `campaign_id`로 쓰입니다. 슬롯/priority/target은 공용 DB의 `segment_ad_mappings` JSON 필드를 placement read model로 읽습니다.
-
-| campaign_id | slot | priority | target |
-|---|---|---:|---|
-| `camp_fresh_01` | `main_hero` | 10 | category=`fresh_food`, age=`30s`,`40s` |
-| `camp_pet_01` | `main_hero` | 8 | category=`pet`, age=`20s`,`30s` |
-| `camp_digital_01` | `main_side_left` | 5 | category=`digital` |
-| `camp_fashion_01` | `main_side_right` | 5 | category=`fashion`, age=`20s`,`30s`, gender=`female` |
-
-### Creatives
-
-각 campaign은 A/B creative 2개를 가집니다. 총 8개입니다. `creative_id`는 `ad_creatives.external_creative_id` 값입니다. 이 컬럼은 migration 호환을 위해 현재 nullable이지만, 앱은 required처럼 검증합니다. Backfill 이후 `NOT NULL`과 `UNIQUE(project_id, external_creative_id)`로 올리는 후속 작업이 필요합니다.
-
-| campaign_id | A creative | B creative |
-|---|---|---|
-| `camp_fresh_01` | `cr_fresh_A` | `cr_fresh_B` |
-| `camp_pet_01` | `cr_pet_A` | `cr_pet_B` |
-| `camp_digital_01` | `cr_digital_A` | `cr_digital_B` |
-| `camp_fashion_01` | `cr_fashion_A` | `cr_fashion_B` |
-
-## Redis cache 정책
-
-Redis에는 최종 선택된 광고가 아니라 슬롯 단위 candidate campaign list를 저장합니다.
-
-Cache key format:
-
-```txt
-tenant:{project_id}:slot:{slot_id}:candidates
-```
-
-예시:
-
-```txt
-tenant:loopad-demo-shop:slot:main_hero:candidates
-```
-
-MVP TTL은 60초입니다.
-
-```txt
-TTL = 60 seconds
-```
-
-흐름:
-
-```txt
-Redis hit
-→ deserialize candidates
-→ target filtering
-→ priority selection
-→ deterministic variant selection
-
-Redis miss
-→ query Postgres
-→ write candidates to Redis with TTL
-→ same decision flow
-```
-
-Redis가 일시적으로 unavailable이면 서버는 Postgres fallback을 시도합니다. Postgres도 사용할 수 없으면 ad decision API는 정상적으로 결정할 수 없습니다.
-
-`creative_id` 값 의미가 바뀐 뒤에는 기존 Redis candidate cache에 숫자 ID가 남아 있을 수 있습니다. 검증 전에는 `tenant:loopad-demo-shop:slot:{slot_id}:candidates` 키를 삭제하거나 로컬 Redis에서 `FLUSHDB`를 실행합니다.
-
-## 테스트와 검증
-
-코드 변경 전후로 아래 명령을 사용합니다.
+health check:
 
 ```bash
-npm run typecheck
-npm run test
+curl -i http://localhost:8080/health
+```
+
+## Quick Test
+
+로컬 서버가 `PORT=8080`으로 떠 있고 DB seed가 들어간 상태에서 실행합니다.
+
+```bash
+curl -i -X POST http://localhost:8080/ads/decision \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "project_id": "demo_project",
+    "user_id": "user_001",
+    "slot_id": "main_banner",
+    "page_url": "/products/chicken_001",
+    "category": "fresh_food",
+    "device": "mobile"
+  }'
+```
+
+정상 응답은 아래 형태입니다. weighted random 선택 결과에 따라 `action_id`와
+`content_id`는 달라질 수 있습니다.
+
+```json
+{
+  "decision_id": "1",
+  "project_id": "demo_project",
+  "user_id": "user_001",
+  "segment_id": "seg_30m_mobile_fresh",
+  "experiment_id": "exp_001",
+  "recommendation_id": "rec_001",
+  "action_id": "act_discount",
+  "content_id": "content_discount",
+  "content_url": "https://s3.ap-northeast-2.amazonaws.com/loop-ad-demo/content_discount.png"
+}
+```
+
+명세 외 필드가 거부되는지 확인하려면 `anonymous_id`를 추가해 `400 Bad Request`가
+나는지 확인합니다.
+
+## Verification
+
+일반 검증:
+
+```bash
 npm run lint
+npm run test
 npm run build
 ```
 
-DB schema까지 확인하려면 Docker와 환경변수 로드가 필요합니다.
+외부 Postgres/Redis 없이 MVP decision flow만 빠르게 확인하려면 아래 테스트를
+실행합니다.
 
 ```bash
-docker compose up -d
-set -a
-source .env.example
-set +a
-npm run db:migrate
-npm run db:verify
-npm run db:seed
+npm run test -- \
+  src/ads/services/ad-decision.service.spec.ts \
+  src/ads/services/ad-action-selector.service.spec.ts \
+  src/ads/services/ad-segment.service.spec.ts \
+  src/ads/controllers/ad-api.integration.spec.ts
 ```
 
-## 자주 생기는 문제
+실제 endpoint가 raw SQL repository까지 타는 흐름은 local Postgres seed가 필요합니다.
+Redis는 장애가 나도 Postgres fallback을 사용하도록 설계되어 있습니다.
 
-### Docker가 실행 중이 아님
+## Deployment
 
-`docker compose up -d`가 실패하면 Docker Desktop이 실행 중인지 확인합니다.
+이 repository는 Docker image로 빌드되어 ECS service로 배포됩니다.
 
-### 환경변수를 로드하지 않음
+배포 workflow는 `.github/workflows/deploy.yml`에 있으며 현재 `main` branch push에서만
+dev ECS service 배포를 실행합니다. `dev` branch push는 서버 배포를 자동 실행하지
+않습니다.
 
-앱이 `.env`를 자동으로 읽지 않습니다. `npm run dev`, `npm run db:migrate`, `npm run db:seed`를 실행하는 터미널에서 먼저 환경변수를 로드해야 합니다.
+배포 대상 이름:
 
-```bash
-set -a
-source .env.example
-set +a
-```
+| Field | Value |
+|---|---|
+| Service | Advertisement API |
+| `service_name` | `advertisement-api` |
+| `ecr_repository` | `loop-ad/advertisement-api` |
+| `ecs_cluster` | `dev-loop-ad-cluster` |
+| `ecs_service` | `dev-advertisement-api` |
+| `container_name` | `advertisement-api` |
 
-### 필수 env 누락
+## Related Docs
 
-이 서버는 시작 시점에 필수 env를 검증합니다. `LOOPAD_*`, `PORT` 중 하나라도 없거나 형식이 틀리면 서버가 빠르게 실패합니다.
+- [AGENTS.md](AGENTS.md): repository authoritative contract
+- [database/schema.sql](database/schema.sql): MVP target schema
+- [database/seed.sql](database/seed.sql): local/demo seed data
+- [docs/mvp-ad-decision/implementation-notes.md](docs/mvp-ad-decision/implementation-notes.md): 구현 상세 설명
+- [docs/ad-cache-policy.md](docs/ad-cache-policy.md): 기존 cache 정책 문서
+- [docs/ad-server-design.md](docs/ad-server-design.md): 기존 slot 기반 설계 문서
 
-### Postgres 포트 혼동
-
-컨테이너 내부 Postgres 포트는 `5432`이지만, 로컬 host 포트는 기본 `55432`입니다.
-
-```txt
-LOOPAD_AURORA_PORT=55432
-PGPORT=55432
-```
-
-### Redis cache가 이전 응답처럼 보임
-
-candidate cache TTL은 60초입니다. seed 데이터를 바꾼 직후라면 TTL이 지나기를 기다리거나 Redis를 재시작합니다.
-
-```bash
-docker compose restart redis
-```
-
-### db:seed에서 duplicate key 오류가 남
-
-현재 `database/seed.sql`은 비어 있는 DB에 demo 데이터를 넣는 용도입니다. 이미 seed가 들어간 DB에서 다시 실행하면 아래처럼 primary key 중복 오류가 날 수 있습니다.
-
-```txt
-ERROR: duplicate key value violates unique constraint "campaign_pkey"
-```
-
-이 경우 schema 적용이나 앱 실행 실패가 아니라, demo 데이터가 이미 들어가 있다는 뜻입니다.
-
-## 참고 문서
-
-- `AGENTS.md`: 이 저장소에서 지켜야 하는 구현 규칙
-- `docs/ad-server-design.md`: 광고 결정 서버 설계 문서
-- `docs/ad-cache-policy.md`: Redis candidate cache 정책
-- `database/schema.sql`: sqldef target schema
-- `database/seed.sql`: demo seed data
+`docs/ad-cache-policy.md`와 `docs/ad-server-design.md`에는 과거 slot/campaign 기반
+내용이 남아 있을 수 있습니다. 현재 MVP 광고 결정 계약은 `AGENTS.md`와 이 README를
+우선합니다.
