@@ -1,6 +1,7 @@
 import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
+import { createCorsOptions } from '../../config/cors';
 import { AdDecisionService } from '../services/ad-decision.service';
 import { AdDecisionController } from './ad-decision.controller';
 
@@ -11,6 +12,9 @@ describe('Ad API integration', () => {
     '/api/ads/decision',
     '/advertisements/decision',
   ];
+  const devShoppingMallOrigin = 'https://demo-shoppingmall.dev.loop-ad.org';
+  const localShoppingMallOrigin = 'http://localhost:5173';
+  const blockedOrigin = 'https://dashboard.dev.loop-ad.org';
   const decisionRequest = {
     project_id: 'demo_project',
     user_id: 'user_001',
@@ -49,6 +53,7 @@ describe('Ad API integration', () => {
     }).compile();
 
     app = moduleRef.createNestApplication();
+    app.enableCors(createCorsOptions());
     await app.init();
   });
 
@@ -96,4 +101,44 @@ describe('Ad API integration', () => {
       .expect(404);
     await request(app.getHttpServer()).post('/v1/ad-click').send({}).expect(404);
   });
+
+  it('allows dev shopping mall preflight requests to the public decision path', async () => {
+    const response = await preflightDecisionRequest(devShoppingMallOrigin).expect(
+      204,
+    );
+
+    expect(response.headers['access-control-allow-origin']).toBe(
+      devShoppingMallOrigin,
+    );
+    expect(response.headers['access-control-allow-methods']).toContain('POST');
+    expect(response.headers['access-control-allow-headers']).toContain(
+      'Content-Type',
+    );
+    expect(response.headers['access-control-allow-credentials']).toBeUndefined();
+  });
+
+  it('allows local frontend preflight requests to the public decision path', async () => {
+    const response = await preflightDecisionRequest(
+      localShoppingMallOrigin,
+    ).expect(204);
+
+    expect(response.headers['access-control-allow-origin']).toBe(
+      localShoppingMallOrigin,
+    );
+  });
+
+  it('does not add CORS allow-origin for unregistered origins', async () => {
+    const response = await preflightDecisionRequest(blockedOrigin);
+
+    expect(response.status).not.toBe(500);
+    expect(response.headers['access-control-allow-origin']).toBeUndefined();
+  });
+
+  function preflightDecisionRequest(origin: string): request.Test {
+    return request(app.getHttpServer())
+      .options('/api/ads/decision')
+      .set('Origin', origin)
+      .set('Access-Control-Request-Method', 'POST')
+      .set('Access-Control-Request-Headers', 'Content-Type');
+  }
 });
