@@ -2,11 +2,23 @@
 
 ## 1. Purpose
 
-This document defines the Redis cache policy for the MVP Ad Decision Server.
+This document defines the Redis cache policy for the MVP Advertisement API.
 
-The cache is used to reduce ad decision latency by avoiding a Postgres query on every ad request.
+The MVP decision flow is based on:
 
-The MVP cache stores slot-level candidate campaign lists, not final selected ads.
+```txt
+user_id
+  -> user_profiles
+  -> segment_definitions
+  -> experiments
+  -> experiment_action_probs
+  -> generated_contents
+  -> ad_decisions
+```
+
+Redis is used only to reduce repeated segment resolution work. It does not store
+final ad decisions, action probabilities, generated content, or experiment
+results.
 
 ---
 
@@ -15,224 +27,146 @@ The MVP cache stores slot-level candidate campaign lists, not final selected ads
 The ad server separates two responsibilities:
 
 ```txt
-Candidate loading → Redis / Postgres
-Decision logic    → application memory
+Segment resolution cache → Redis
+Decision data lookup      → Postgres
+Decision logic            → application memory
 ```
 
-Redis stores the candidate campaigns for each slot.
+Redis stores the resolved segment id for a `project_id + user_id` pair.
 
-The application server performs:
-
-```txt
-target filtering → priority selection → A/B variant selection
-```
-
-This keeps the cache reusable across users while still allowing personalized decisions per request.
+The application server still reads experiments, probabilities, generated
+content, and decision persistence data from Postgres.
 
 ---
 
-## 3. Candidate Cache Key
+## 3. Segment Cache Key
 
 ### Key Format
 
 ```txt
-tenant:{project_id}:slot:{slot_id}:candidates
+seg:{project_id}:{user_id}
 ```
 
 ### Example
 
 ```txt
-tenant:loopad-demo-shop:slot:main_hero:candidates
-tenant:loopad-demo-shop:slot:main_side_left:candidates
-tenant:loopad-demo-shop:slot:main_side_right:candidates
+seg:demo_project:user_001
 ```
 
 ### Rules
 
-- Include `project_id` in the key to avoid key collision across future projects or tenants.
-- Use `slot_id` as the cache partition because candidate pools are slot-specific.
-- Do not cache final selected ads per user in the MVP.
-- Do not hardcode only one slot in Redis-related code.
+- Include `project_id` to avoid key collision across future projects.
+- Include `user_id` because MVP identity and linkage are user-based.
+- Do not use `anonymous_id`.
+- Do not cache final selected ads per user.
+- Do not cache action probabilities or generated content in the MVP.
 
 ---
 
-## 4. Candidate Cache Value
+## 4. Segment Cache Value
 
-The value is a serialized array of candidate campaigns for one slot.
+The value is the resolved segment id as a plain string.
 
 Example:
 
-```json
-[
-  {
-    "campaign_id": "camp_fresh_01",
-    "priority": 10,
-    "status": "active",
-    "target": {
-      "category": "fresh_food",
-      "age_groups": ["30s", "40s"],
-      "gender": null
-    },
-    "placement": {
-      "slot_id": "main_hero",
-      "weight": 100
-    },
-    "creatives": [
-      {
-        "creative_id": "cr_fresh_A",
-        "campaign_id": "camp_fresh_01",
-        "variant": "A",
-        "headline": "신선한 닭가슴살 30% 할인",
-        "image_url": "https://placehold.co/800x400?text=fresh-A",
-        "target_url": "/category/fresh_food"
-      },
-      {
-        "creative_id": "cr_fresh_B",
-        "campaign_id": "camp_fresh_01",
-        "variant": "B",
-        "headline": "오늘의 신선특가 ✨",
-        "image_url": "https://placehold.co/800x400?text=fresh-B",
-        "target_url": "/category/fresh_food"
-      }
-    ]
-  }
-]
+```txt
+seg_30m_mobile_fresh
 ```
 
 ### Value Rules
 
-- Each candidate item represents one campaign.
-- Each campaign candidate includes its placement data.
-- Each campaign candidate includes its target conditions.
-- Cache JSON uses short target keys: `category`, `age_groups`, and `gender`.
-- Common DB rows use `segment_ad_mappings.segment_json`; the mapper converts it into cache JSON keys.
-- Each campaign candidate includes both A and B creatives.
-- Including both creatives avoids another Redis lookup after variant hashing.
-- The value must be enough to complete the decision in memory.
+- Store only the segment id.
+- Do not store full `user_profiles` rows.
+- Do not store PII or request bodies.
+- Do not store generated content URLs.
+- Do not store final `decision_id`.
+
+The cached segment id is an optimization only. Postgres seed and runtime tables
+remain the source of truth.
 
 ---
 
 ## 5. Lookup Flow
 
-### Multi-slot Request
-
-The ad decision API receives multiple slots in one request.
-
-Example:
-
-```json
-{
-  "slots": ["main_hero", "main_side_left", "main_side_right"]
-}
-```
-
-The server builds Redis keys for all requested slots and uses MGET.
-
-```txt
-MGET
-tenant:loopad-demo-shop:slot:main_hero:candidates
-tenant:loopad-demo-shop:slot:main_side_left:candidates
-tenant:loopad-demo-shop:slot:main_side_right:candidates
-```
-
 ### Hit Flow
-
-If Redis returns candidates for a slot:
 
 ```txt
 Redis hit
-→ deserialize candidates
-→ target filtering
-→ priority selection
-→ deterministic variant selection
-→ decision response
+→ use cached segment_id
+→ query experiment/probability/content from Postgres
+→ run decision logic
+→ persist normal decision if applicable
+→ response
 ```
 
 ### Miss Flow
 
-If Redis misses for a slot:
-
 ```txt
 Redis miss
-→ query Postgres for slot candidates
-→ build candidate payload
-→ write payload to Redis with TTL
-→ perform decision logic in memory
-→ decision response
+→ query user_profiles by project_id + user_id
+→ match profile against segment_definitions
+→ fallback to default segment when needed
+→ write segment_id to Redis with TTL
+→ continue decision flow
 ```
 
-### Partial Hit Flow
-
-If some slots hit and others miss:
+### Redis Failure Flow
 
 ```txt
-hit slots  → use Redis candidates
-miss slots → load from Postgres and backfill Redis
+Redis error
+→ log warning
+→ resolve segment from Postgres
+→ continue decision flow
 ```
 
-The server should still return decisions for all requested slots.
+Redis failure must not fail the API when Postgres can still resolve the segment.
 
 ---
 
-## 6. TTL Policy
+## 6. Segment Matching Source of Truth
 
-### MVP TTL
+The cache stores only the result of this Postgres-backed matching process:
 
-Use a short TTL for candidate cache entries.
+```txt
+segment_definitions.age_group = user_profiles.age_group
+segment_definitions.gender    = user_profiles.gender
+segment_definitions.device    = user_profiles.device
+segment_definitions.category  = user_profiles.favorite_category
+```
 
-Recommended MVP value:
+Rules:
+
+- Matching uses static AND-equality.
+- `NULL` segment conditions behave as pass-through conditions.
+- A non-default segment with every matching field empty is not considered a
+  meaningful personalized match.
+- If no user profile exists, use the default segment seed row.
+- If no non-default segment matches, use the default segment seed row.
+
+---
+
+## 7. TTL Policy
+
+Use a short TTL for segment cache entries.
+
+Current MVP TTL:
 
 ```txt
 60 seconds
 ```
 
-### Reason
+Reason:
 
-A short TTL keeps the MVP simple.
+- Keeps MVP correctness simple.
+- Allows local seed/profile/segment changes to become visible quickly.
+- Avoids explicit invalidation or projector dependencies.
 
-It allows campaign seed changes, status changes, and placement changes to be reflected naturally after the TTL expires.
+Trade-off:
 
-It also reduces the risk of paused or ended campaigns being exposed permanently.
+- Short TTL creates more Postgres reads.
+- Long TTL risks stale segment assignment.
 
-### Trade-off
-
-Short TTL:
-
-- Easier to implement.
-- Safer for MVP correctness.
-- More Postgres fallback queries.
-
-Long TTL:
-
-- Fewer Postgres queries.
-- Higher risk of stale campaign exposure.
-- Requires explicit invalidation or projector-based updates.
-
-For the MVP, choose simplicity and correctness.
-
----
-
-## 7. Cache Miss Fallback
-
-The MVP must support fallback from Redis to Postgres.
-
-This is required because there is no projector in the MVP.
-
-Fallback responsibility:
-
-```txt
-Ad Decision Server
-```
-
-Future responsibility:
-
-```txt
-Campaign Projector / Cache Projector
-```
-
-The future projector may update or invalidate Redis whenever campaign, creative, or placement data changes.
-
-The ad server read path should remain mostly unchanged after the projector is introduced.
+For the MVP, choose short TTL and simple behavior.
 
 ---
 
@@ -242,158 +176,90 @@ The ad server read path should remain mostly unchanged after the projector is in
 
 The MVP does not implement explicit invalidation.
 
-Campaign changes are reflected through TTL expiration.
+Segment changes become visible after TTL expiration.
 
 ### Future
 
 Future versions may use:
 
 ```txt
-write-through update
 explicit invalidation
+write-through update
 projector-based refresh
 event-driven cache rebuild
 ```
 
-Example future invalidation key:
+Example invalidation key:
 
 ```txt
-DEL tenant:loopad-demo-shop:slot:main_hero:candidates
+DEL seg:demo_project:user_001
 ```
 
 ---
 
-## 9. Redis and A/B Variant Selection
+## 9. What Redis Must Not Cache
 
-Redis stores both A and B creatives for each campaign.
+Redis must not cache:
 
-The server chooses the variant after campaign selection.
+- final selected ad decisions
+- `decision_id`
+- `experiment_action_probs`
+- generated content URLs
+- user profile rows
+- secrets, tokens, passwords, or API keys
+- SDK/Ingest event payloads
 
-Variant input:
-
-```txt
-user_id + ":" + campaign_id
-```
-
-Example:
-
-```ts
-hash = murmurhash3.x86.hash32(user_id + ":" + campaign_id, 0)
-bucket = hash % 100
-
-if bucket < 50:
-  variant = "A"
-else:
-  variant = "B"
-```
-
-Reason:
-
-- Same user and same campaign always produce the same variant.
-- No user-level assignment table is required.
-- No extra Redis lookup is needed after hashing.
-- Experiment data is not polluted by random per-request changes.
+Action probabilities are calculated by the AI/experiment server and stored in
+Postgres. The advertisement server reads them and performs weighted random
+selection only.
 
 ---
 
-## 10. Empty Slot Handling
-
-Redis may return candidates, but all candidates can still fail targeting.
-
-In that case, return a null decision.
-
-Example:
-
-```json
-{
-  "slot_id": "main_hero",
-  "creative_id": null,
-  "campaign_id": null,
-  "variant": null,
-  "creative": null
-}
-```
-
-Do not cache final null decisions per user in the MVP.
-
-The candidate cache remains slot-level and reusable.
-
----
-
-## 11. Serialization Rules
-
-The cache value should be JSON-serialized in the MVP.
-
-Rules:
-
-- Keep the payload explicit.
-- Avoid storing database entity objects directly.
-- Store only fields needed by the decision flow.
-- Do not store secrets.
-- Do not store user-specific decisions.
-- Version the payload if the shape becomes unstable later.
-
-Future key format with versioning:
-
-```txt
-tenant:{project_id}:slot:{slot_id}:candidates:v1
-```
-
-For the MVP, version suffix is optional.
-
----
-
-## 12. Failure Behavior
+## 10. Failure Behavior
 
 ### Redis Unavailable
-
-If Redis is unavailable, the server may query Postgres directly.
 
 Expected behavior:
 
 ```txt
 Redis error
-→ log error
-→ query Postgres
-→ decide ads
-→ return response
+→ log warning
+→ resolve segment from Postgres
+→ return ad decision response
 ```
 
-The ad decision API should not fail only because Redis is unavailable, unless Postgres is also unavailable.
+### Postgres Unavailable
 
-### Postgres Unavailable on Redis Miss
+Postgres is required for experiment, probability, content, and persistence data.
+If Postgres is unavailable, the API may fail with a controlled server error.
 
-If Redis misses and Postgres is unavailable, return null decisions for affected slots or return a controlled server error depending on product requirements.
-
-For the MVP, prefer a controlled error during development so the problem is visible.
+Redis alone is not enough to complete a decision in the MVP.
 
 ---
 
-## 13. Observability
+## 11. Observability
 
 Log at least:
 
-- requested slots
-- cache hit/miss per slot
-- selected campaign_id
-- selected creative_id
-- selected variant
-- null decision reason
-- Redis fallback usage
+- Redis segment lookup failure
+- Redis segment cache write failure
+- completed experiment without winner
+- decision insert failure
+
+Logs must not include secrets, passwords, tokens, or DB credentials. Avoid
+logging personally identifying information beyond non-secret technical ids
+needed for debugging.
 
 ---
 
-## 14. Test Checklist
+## 12. Test Checklist
 
 Cache-related tests should verify:
 
-- Redis key generation includes project_id and slot_id.
-- Multi-slot requests use multiple slot keys.
-- Redis hit path does not query Postgres.
-- Redis miss path queries Postgres and writes Redis.
-- Partial hit/miss returns decisions for all slots.
-- Cached candidates include both A and B creatives.
-- Deterministic hashing selects the same variant for the same user and campaign.
-- No matching candidate returns a null decision.
-- TTL is applied when writing candidate cache.
-- Redis failure falls back to Postgres if possible.
+- Segment cache key format is `seg:{project_id}:{user_id}`.
+- Redis hit path does not query Postgres for segment resolution.
+- Redis miss path queries Postgres and writes the segment id with TTL.
+- Redis failure falls back to Postgres.
+- Missing user profile uses the default segment.
+- Segment matching uses `user_profiles`, not request context.
+- Final ad decisions are not cached in Redis.

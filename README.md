@@ -341,9 +341,5 @@ dev ECS service 배포를 실행합니다. `dev` branch push는 서버 배포를
 - [database/schema.sql](database/schema.sql): MVP target schema
 - [database/seed.sql](database/seed.sql): local/demo seed data
 - [docs/mvp-ad-decision/implementation-notes.md](docs/mvp-ad-decision/implementation-notes.md): 구현 상세 설명
-- [docs/ad-cache-policy.md](docs/ad-cache-policy.md): 기존 cache 정책 문서
-- [docs/ad-server-design.md](docs/ad-server-design.md): 기존 slot 기반 설계 문서
-
-`docs/ad-cache-policy.md`와 `docs/ad-server-design.md`에는 과거 slot/campaign 기반
-내용이 남아 있을 수 있습니다. 현재 MVP 광고 결정 계약은 `AGENTS.md`와 이 README를
-우선합니다.
+- [docs/ad-cache-policy.md](docs/ad-cache-policy.md): segment cache 정책
+- [docs/ad-server-design.md](docs/ad-server-design.md): MVP 광고 결정 서버 설계

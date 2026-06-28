@@ -2,15 +2,19 @@
 
 ## 1. Purpose
 
-The Ad Decision Server decides which advertisement should be shown in each ad slot on the LoopAd demo shopping service.
+The Advertisement API returns one advertising content decision for a LoopAd demo
+shopping request.
 
 The MVP goal is:
 
 ```txt
-Show personalized ads quickly on the main page.
+Expose one generated ad content through the current segment experiment and
+return a decision_id that later events can carry.
 ```
 
-This server focuses on ad decisioning, not analytics, recommendation modeling, bidding, or full campaign management.
+This server owns only the ad exposure decision step. It does not own event
+collection, recommendation calculation, content generation, click tracking, or
+analytics storage.
 
 ---
 
@@ -20,421 +24,430 @@ This server focuses on ad decisioning, not analytics, recommendation modeling, b
 
 The MVP includes:
 
-- Main page ad decision API.
-- Three main page ad slots.
-- Common schema based candidate read model.
-- Rule-based target filtering.
-- Priority-based campaign selection.
-- Deterministic A/B creative selection.
-- Redis candidate cache.
-- Impression event emit interface.
+- `POST /ads/decision`.
+- `user_id` based segment resolution.
+- Static segment matching through `user_profiles` and `segment_definitions`.
+- Active experiment lookup for the resolved segment.
+- Stored probability based weighted random action selection.
+- Completed experiment winner-action precedence.
+- Generated content lookup by `recommendation_id + action_id`.
+- Default segment and default content fallback from seed data.
+- Normal decision persistence to `ad_decisions`.
+- `decision_id` in the API response.
 
 ### Excluded
 
 The MVP excludes:
 
-- Detail page ads.
-- Search page ads.
-- Real-time bidding.
-- Recommendation server integration.
-- Weight-based campaign distribution.
-- Same-priority campaign competition.
-- Kafka/Kinesis integration implementation.
-- Analytics consumer implementation.
-- Click tracking.
-- Projector-based Redis cache updates.
-- Admin UI for campaign management.
+- `anonymous_id` based tracking.
+- Multi-slot ad response contracts.
+- Click tracking endpoint.
+- Impression event emission from this server.
+- Thompson Sampling calculation.
+- Synchronous AI/recommendation/content-generation calls.
+- Kafka/Kinesis/ClickHouse producers.
+- Full ad-management platform behavior.
+- Dashboard or analytics pipelines.
 
 ---
 
-## 3. Slot Definition
-
-The MVP supports only main page slots.
-
-```ts
-slot_id = "main_hero"        // large main banner
-slot_id = "main_side_left"   // left side banner
-slot_id = "main_side_right"  // right side banner
-```
-
-The MVP intentionally focuses on the main page because supporting main, detail, and search pages at the same time would require different candidate pools, cache keys, and exposure logic for each slot group.
-
----
-
-## 4. Data Model
-
-The runtime ad model is still exposed to the decision service as three layers.
-
-```txt
-Candidate mapping / Campaign / Creative
-```
-
-### Campaign
-
-Campaign is the business unit of advertising.
-
-It represents what the advertiser wants to promote.
-
-Example campaigns:
-
-- Fresh food promotion
-- Pet product promotion
-- Digital appliance event
-- Fashion promotion
-
-Campaign fields after mapping:
-
-```ts
-campaign_id
-name
-priority
-status
-target
-```
-
-### Creative
-
-Creative is the actual material rendered on the screen.
-
-Each campaign can have A/B creatives.
-
-Creative fields after mapping:
-
-```ts
-creative_id
-campaign_id
-variant
-headline
-image_url
-target_url
-```
-
-### Candidate Mapping
-
-Candidate mapping defines where and for which target a campaign can be shown.
-
-Mapping fields after conversion:
-
-```ts
-campaign_id
-slot_id
-weight
-priority
-target
-```
-
-In this phase, `weight` exists in the data model but is not used for campaign selection.
-
-### Database Schema (Postgres)
-
-`database/schema.sql` is the sqldef target schema for local advertisement-server development. It contains the common tables this service directly reads:
-
-```txt
-projects
-campaigns
-coupons
-ad_creatives
-recommendation_results
-experiments
-segment_ad_mappings
-```
-
-The repository reads `segment_ad_mappings + campaigns + ad_creatives`, then the mapper converts common rows into the internal `CandidateCampaign` shape.
-
-ID mapping:
-
-```txt
-campaigns.id                   -> DB join key
-campaigns.external_campaign_id -> API/token/hash campaign_id
-ad_creatives.id                -> DB join key
-ad_creatives.external_creative_id -> API/token creative_id
-```
-
-`ad_creatives.external_creative_id` is nullable for migration compatibility in the current schema, but application mapping treats it as required. After existing rows are backfilled, promote it to `NOT NULL` with `UNIQUE(project_id, external_creative_id)`.
-
-Candidate mapping:
-
-```txt
-execution_hint_json.slot_id  -> placement.slot_id
-execution_hint_json.priority -> candidate.priority
-execution_hint_json.weight   -> placement.weight
-segment_json                 -> target
-payload_json.variant         -> creative.variant
-```
-
----
-
-## 5. Decision Flow
-
-The ad server narrows candidates in this order:
-
-```txt
-Placement → Campaign → Creative
-```
-
-### Step 1. Placement Filtering
-
-The server receives requested slots.
-
-For each slot, it loads candidate campaigns whose placement read model is represented by `segment_ad_mappings.execution_hint_json.slot_id`.
-
-Example:
-
-```txt
-main_hero → camp_fresh_01, camp_pet_01
-```
-
-### Step 2. Campaign Filtering
-
-The server filters candidates by user/request context.
-
-Target rules:
-
-- Target conditions are matched with AND logic.
-- Empty target fields are skipped.
-- Category is the primary condition.
-- Age and gender are optional supporting conditions.
-- If a candidate target has `gender`, `context.gender` must exactly match it.
-- If `context.gender` is missing or null, gender-targeted campaigns do not match.
-- Fully empty targets are not allowed for personalized campaigns.
-
-Example:
-
-```txt
-User context: category=fresh_food, age_group=30s
-Candidate: camp_fresh_01
-Result: match
-```
-
-### Step 3. Campaign Ranking
-
-After filtering, the server selects the highest-priority campaign.
-
-Rules:
-
-- Higher priority wins.
-- Weight-based distribution is out of MVP scope.
-- Same-priority competition is intentionally avoided in the MVP seed data.
-
-### Step 4. Creative Selection
-
-After selecting a campaign, the server chooses an A/B creative through deterministic hashing.
-
-Input:
-
-```txt
-user_id + ":" + campaign_id
-```
-
-Bucket rule:
-
-```txt
-hash = MurmurHash3 x86 32-bit, seed 0
-bucket = hash % 100
-0-49  -> A
-50-99 -> B
-```
-
-This keeps the same user assigned to the same creative variant for the same campaign without storing user-level assignment records.
-
----
-
-## 6. Ad Decision API
+## 3. API Contract
 
 ### Endpoint
 
 ```http
-POST /v1/ad-decision
+POST /ads/decision
 ```
 
 ### Request
 
 ```json
 {
-  "project_id": "loopad-demo-shop",
-  "user_id": "user_123",
-  "session_id": "session_456",
-  "slots": ["main_hero", "main_side_left", "main_side_right"],
-  "context": {
-    "page_url": "/",
-    "device": "mobile",
-    "category": "fresh_food",
-    "age_group": "30s",
-    "gender": null
-  }
+  "project_id": "demo_project",
+  "user_id": "user_001",
+  "slot_id": "main_banner",
+  "page_url": "/products/chicken_001",
+  "category": "fresh_food",
+  "device": "mobile"
 }
 ```
 
 ### Request Rules
 
-- `slots` must be an array.
-- The server should process multiple slots in one request.
-- `user_id` may be an anonymous ID when the user is not logged in.
-- `context.category` is used as the primary targeting signal in the MVP.
-- `context.age_group` and `context.gender` are optional supporting request signals.
-- If a candidate target has `gender`, a missing or null `context.gender` does not match it.
+- `project_id` is required.
+- `user_id` is required.
+- `slot_id`, `page_url`, `category`, and `device` are request context.
+- `anonymous_id` is forbidden.
+- MVP segment matching uses `user_profiles`, not request context.
 
 ### Response
 
 ```json
 {
-  "decisions": [
-    {
-      "slot_id": "main_hero",
-      "creative_id": "cr_fresh_B",
-      "campaign_id": "camp_fresh_01",
-      "variant": "B",
-      "creative": {
-        "image_url": "https://placehold.co/800x400?text=fresh-B",
-        "target_url": "/category/fresh_food",
-        "headline": "오늘의 신선특가 ✨"
-      }
-    },
-    {
-      "slot_id": "main_side_left",
-      "creative_id": null,
-      "campaign_id": null,
-      "variant": null,
-      "creative": null
-    }
-  ]
+  "decision_id": "1",
+  "project_id": "demo_project",
+  "user_id": "user_001",
+  "segment_id": "seg_30m_mobile_fresh",
+  "experiment_id": "exp_001",
+  "recommendation_id": "rec_001",
+  "action_id": "act_discount",
+  "content_id": "content_discount",
+  "content_url": "https://s3.ap-northeast-2.amazonaws.com/loop-ad-demo/content_discount.png"
 }
 ```
 
 ### Response Rules
 
-- The response contains one decision per requested slot.
-- If no candidate matches, return a null decision.
-- The server must not force a fallback ad unless explicitly required.
+- The response always uses the nine-field MVP shape above.
+- `decision_id` is the stringified `ad_decisions.id` when persistence succeeds.
+- Fallback paths currently return `decision_id: ""` and skip persistence.
+- Later SDK/Ingest events related to the shown ad should carry the same
+  `decision_id`, `experiment_id`, `recommendation_id`, `action_id`, and
+  `content_id` values when available.
 
 ---
 
-## 7. Click Tracking Boundary
+## 4. Data Model
+
+`database/schema.sql` is the sqldef target schema for local advertisement-server
+development.
+
+The MVP runtime tables are:
+
+```txt
+user_profiles
+segment_definitions
+experiments
+experiment_action_probs
+generated_contents
+ad_decisions
+```
+
+### `user_profiles`
+
+Source of user attributes for segment matching.
+
+Important fields:
+
+```txt
+project_id
+user_id
+age_group
+gender
+device
+favorite_category
+```
+
+### `segment_definitions`
+
+Static segment rules.
+
+Important fields:
+
+```txt
+id
+project_id
+age_group
+gender
+device
+category
+is_default
+```
+
+### `experiments`
+
+Segment-level experiment exposure contract.
+
+Important fields:
+
+```txt
+id
+project_id
+segment_id
+recommendation_id
+status
+goal_metric
+target_value
+winner_action_id
+started_at
+ended_at
+created_at
+```
+
+`goal_metric` and `target_value` are kept for the AI/experiment server's
+evaluate logic even though this advertisement server does not directly use them.
+
+### `experiment_action_probs`
+
+Stored action selection probabilities.
+
+Important fields:
+
+```txt
+id
+experiment_id
+action_id
+probability
+impressions
+clicks
+purchases
+updated_at
+```
+
+The advertisement server reads `probability` and does not update these rows.
+
+### `generated_contents`
+
+Generated ad content lookup table.
+
+Important fields:
+
+```txt
+id
+project_id
+recommendation_id
+action_id
+content_url
+is_default
+```
+
+### `ad_decisions`
+
+Normal decision persistence table.
+
+Important fields:
+
+```txt
+id
+project_id
+user_id
+segment_id
+experiment_id
+action_id
+content_id
+created_at
+```
+
+`ad_decisions.id` is returned as `decision_id`.
+
+---
+
+## 5. Decision Flow
+
+The ad server decides content in this order:
+
+```txt
+user_id
+  -> user_profiles
+  -> segment_definitions
+  -> experiments
+  -> experiment_action_probs
+  -> generated_contents
+  -> ad_decisions
+```
+
+### Step 1. Resolve Segment
+
+The server first checks Redis:
+
+```txt
+seg:{project_id}:{user_id}
+```
+
+If Redis hits, the cached segment id is used.
+
+If Redis misses or fails, the server reads `user_profiles` and matches against
+`segment_definitions`.
+
+Segment matching uses static AND-equality:
+
+```txt
+segment.age_group = profile.age_group
+segment.gender    = profile.gender
+segment.device    = profile.device
+segment.category  = profile.favorite_category
+```
+
+`NULL` segment fields are pass-through conditions. If no profile exists or no
+non-default segment matches, use the default segment seed row.
+
+### Step 2. Find Experiment
+
+The server finds an experiment for the resolved segment:
+
+```txt
+status IN ('running', 'completed')
+```
+
+Ordering:
+
+1. Prefer `running`.
+2. If no running experiment exists, use the most recent `completed` experiment.
+
+If no experiment exists, return default content and do not persist a decision.
+
+### Step 3. Select Action
+
+If the experiment is `completed` and has `winner_action_id`, use that action.
+
+If the experiment is `completed` without `winner_action_id`, log an error,
+return default content, and do not persist a decision.
+
+If the experiment is `running`, read `experiment_action_probs`.
+
+Rules:
+
+- Use only positive finite probability rows.
+- Normalize by the sum of stored probabilities at selection time.
+- Do not write probability values.
+- If probability rows are missing, select evenly among available actions for the
+  same recommendation.
+
+The advertisement server must not calculate Thompson Sampling.
+
+### Step 4. Resolve Content
+
+The server looks up generated content by:
+
+```txt
+project_id + recommendation_id + action_id
+```
+
+If the content row is missing or `content_url` is empty, return default banner
+content and do not persist a decision.
+
+### Step 5. Persist Decision
+
+When segment, experiment, action, and non-default content are all resolved,
+insert into `ad_decisions` and return `id::text` as `decision_id`.
+
+If insert fails, log the error, return content normally, and set
+`decision_id: ""`.
+
+---
+
+## 6. Fallback Policy
+
+| Situation | Behavior |
+|---|---|
+| Missing user profile | Use default segment |
+| No segment match | Use default segment |
+| No active experiment | Return default content, skip insert |
+| Running experiment has no probability rows | Select available actions evenly |
+| Completed experiment has no winner | Return default content, skip insert |
+| Selected content missing or URL empty | Return default content, skip insert |
+| Decision insert failure | Return selected content, `decision_id: ""` |
+
+Default segment and default content must come from seed data. They must not be
+introduced as silent runtime env defaults.
+
+Fallback persistence is intentionally skipped for now because the nullable
+policy for `ad_decisions.experiment_id`, `action_id`, and `content_id` is not
+finalized.
+
+---
+
+## 7. Cache Policy
+
+The MVP cache stores only resolved segment ids.
+
+```txt
+seg:{project_id}:{user_id} -> segment_id
+```
+
+It does not cache:
+
+- final decisions
+- action probabilities
+- generated content
+- user profile rows
+- SDK/Ingest events
+
+See [ad-cache-policy.md](ad-cache-policy.md) for details.
+
+---
+
+## 8. Click Tracking Boundary
 
 This server does not provide click tracking.
 
 Rules:
 
-- Do not issue signed tracking tokens from the ad decision API.
+- Do not expose `POST /ads/click`.
 - Do not expose `POST /v1/ad-click`.
-- Do not add token-signing secrets to this service.
-- Click tracking, if needed, is owned by another service.
+- Do not issue signed tracking tokens.
+- Do not add token-signing secrets.
+
+Ad click and impression data are collected as SDK/Ingest events, not through
+this server.
 
 ---
 
-## 8. Event Emit Interface
-
-The ad server defines an event emit interface for impressions.
-
-MVP behavior:
-
-- The ad server creates event objects.
-- The event emitter interface receives the event.
-- The actual transport is replaced with logging in the MVP.
-
-Future behavior:
-
-- The event emitter can be connected to Kafka, Kinesis, or another event pipeline.
-- Analytics consumers are owned outside the ad decision server.
-
-### Impression Event
-
-The server emits one impression event per non-null decision when building the response. Real viewability tracking, meaning whether the ad was actually seen on screen, is out of MVP scope.
-
-Example:
-
-```json
-{
-  "event_type": "ad_impression",
-  "project_id": "loopad-demo-shop",
-  "slot_id": "main_hero",
-  "campaign_id": "camp_fresh_01",
-  "creative_id": "cr_fresh_B",
-  "variant": "B",
-  "user_id": "user_123",
-  "session_id": "session_456"
-}
-```
-
 ## 9. Demo Seed Data
 
-### Placements
+The seed file should include:
 
-`campaign_id` is read from `campaigns.external_campaign_id`. Slot, priority, weight, and target data are read from `segment_ad_mappings` JSON fields as the placement read model.
+```txt
+demo_project
+user_001
+seg_default
+seg_30m_mobile_fresh
+exp_001
+rec_001
+act_discount
+act_free_shipping
+act_bundle
+content_default_banner
+content_discount
+content_free_shipping
+content_bundle
+```
 
-| campaign_id | name | slot | priority | status | target |
-|---|---|---:|---:|---|---|
-| camp_fresh_01 | 신선식품 프로모션 | main_hero | 10 | active | category=fresh_food / age=30s,40s |
-| camp_pet_01 | 반려동물 용품 프로모션 | main_hero | 8 | active | category=pet / age=20s,30s |
-| camp_digital_01 | 디지털/가전 기획전 | main_side_left | 5 | active | category=digital |
-| camp_fashion_01 | 패션 기획전 | main_side_right | 5 | active | category=fashion / age=20s,30s / gender=female |
+Expected `user_001` flow:
 
-### Creatives
-
-| creative_id | campaign_id | variant | headline | image_url | target_url |
-|---|---|---|---|---|---|
-| cr_fresh_A | camp_fresh_01 | A | 신선한 닭가슴살 30% 할인 | https://placehold.co/800x400?text=fresh-A | /category/fresh_food |
-| cr_fresh_B | camp_fresh_01 | B | 오늘의 신선특가 ✨ | https://placehold.co/800x400?text=fresh-B | /category/fresh_food |
-| cr_pet_A | camp_pet_01 | A | 우리 아이 간식 특가 | https://placehold.co/800x400?text=pet-A | /category/pet |
-| cr_pet_B | camp_pet_01 | B | 반려동물 필수템 모음 | https://placehold.co/800x400?text=pet-B | /category/pet |
-| cr_digital_A | camp_digital_01 | A | 신상 이어폰 입고 | https://placehold.co/400x400?text=digital-A | /category/digital |
-| cr_digital_B | camp_digital_01 | B | 가전 최대 50% | https://placehold.co/400x400?text=digital-B | /category/digital |
-| cr_fashion_A | camp_fashion_01 | A | 지금 많이 보는 데일리룩 | https://placehold.co/400x400?text=fashion-A | /category/fashion |
-| cr_fashion_B | camp_fashion_01 | B | 오늘의 패션 특가 | https://placehold.co/400x400?text=fashion-B | /category/fashion |
+```txt
+demo_project + user_001
+  -> seg_30m_mobile_fresh
+  -> exp_001
+  -> one action selected by stored probability
+  -> generated content URL
+  -> ad_decisions.id returned as decision_id
+```
 
 ---
 
 ## 10. Test Scenarios
 
-### Scenario 1. main_hero competition
+### Scenario 1. Normal user decision
 
-| Request Context | Expected Decision | Verification Point |
-|---|---|---|
-| age=30s, category=fresh_food | camp_fresh_01 | target filtering |
-| age=20s, category=pet | camp_pet_01 | context-based selection |
-| age=30s, category=pet | camp_pet_01 | pet target allows 20s and 30s |
-| age=50s, category=book | null | empty slot behavior |
-| age=20s, category=fresh_food | null | age mismatch |
+- `project_id = demo_project`
+- `user_id = user_001`
+- resolved segment is `seg_30m_mobile_fresh`
+- selected experiment is `exp_001`
+- selected action resolves to generated content
+- normal path persists `ad_decisions`
+- response includes all nine MVP fields
 
-### Scenario 2. A/B creative selection
+### Scenario 2. Probability-driven action selection
 
-Given:
+- Balanced probabilities produce roughly balanced repeated selections.
+- Skewed probabilities shift repeated selections toward the higher-probability
+  action.
+- The advertisement server never recomputes or writes probability values.
 
-```txt
-category=fresh_food
-age_group=30s
-slot_id=main_hero
-```
+### Scenario 3. Fallback behavior
 
-Expected:
+- Missing user profile uses default segment.
+- Missing probability rows use equal action selection.
+- Missing experiment returns default content without insert.
+- Missing selected content returns default banner without insert.
+- Insert failure keeps the content response and returns `decision_id: ""`.
 
-- `camp_fresh_01` always wins campaign selection.
-- Different users may receive different variants.
-- The same user must receive the same variant for the same campaign.
-- MurmurHash3 x86 32-bit with seed `0` must produce these locked values for `camp_fresh_01`:
+### Scenario 4. Completed experiment
 
-| user_id | bucket | variant |
-|---|---:|:---:|
-| user_001 | 44 | A |
-| user_002 | 25 | A |
-| user_003 | 65 | B |
-| user_004 | 61 | B |
-| user_005 | 45 | A |
-| user_006 | 70 | B |
-| user_007 | 6 | A |
-| user_008 | 9 | A |
-
-- The distribution for `user_0` through `user_999` should stay within a 45-55% tolerance band for both variants.
-
-### Scenario 3. Side slots
-
-| Slot | Campaign | Expected |
-|---|---|---|
-| main_side_left | camp_digital_01 | digital context matches |
-| main_side_right | camp_fashion_01 | fashion + 20s/30s + female context matches |
-| main_side_right | null | fashion + 20s/30s + male context returns null |
-| main_side_right | null | fashion + 20s/30s + null gender returns null |
-| main_side_right | null | non-matching category or age returns null |
+- `completed + winner_action_id` selects the winner before any random path.
+- Completed winner decisions are still persisted when content exists.
+- `completed` without winner returns default content and skips insert.
 
 ---
 
@@ -442,12 +455,11 @@ Expected:
 
 After the MVP, the server may be extended with:
 
-- Detail page slots.
-- Search page slots.
-- Projector-based cache update.
-- Explicit Redis invalidation.
-- Weight-based campaign distribution.
-- Frequency capping.
-- Impression deduplication.
-- Real analytics pipeline integration.
-- Recommendation server integration.
+- fallback decision persistence with nullable linkage columns
+- explicit segment cache invalidation
+- cache projector integration
+- richer segment rule language
+- frequency capping
+- multiple ad slots
+- dedicated impression/click ownership if service boundaries change
+- analytics/dashboard integrations outside the request path
